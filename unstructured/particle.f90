@@ -1035,7 +1035,8 @@ subroutine init_particles(lrestart, ierr)
       call define_element_quadrature(itri, int_pts_main, int_pts_tor)
       call define_fields(itri, 0, 1, 0)
       tempxx = intxx2(mu79(:, :, OP_1), nu79(:, :, OP_1))
-      tempxx = tempxx + smooth_pres*(intxx2(mu79(:, :, OP_DZZ), nu79(:, :, OP_DZZ)) + intxx2(mu79(:, :, OP_DRR), nu79(:, :, OP_DRR)))
+      tempxx = tempxx + smooth_pres* &
+              (intxx2(mu79(:, :, OP_DZZ), nu79(:, :, OP_DZZ)) + intxx2(mu79(:, :, OP_DRR), nu79(:, :, OP_DRR)))
 #ifdef USE3D
       tempxx = tempxx + smooth_pres*intxx3(mu79(:, :, OP_DPP), nu79(:, :, OP_DPP), ri4_79)
 #endif
