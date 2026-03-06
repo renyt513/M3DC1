@@ -496,6 +496,11 @@ subroutine set_defaults
   call add_var_double("frequency", frequency, 0., &
        "Frequency in time-independent calculations", time_grp)
 
+  call add_var_int("gamma_gr_stop", gamma_gr_stop, 0, "Stop linear simulation when growth rate gamma is converged", time_grp)
+  call add_var_int("nt_gamma_gr", nt_gamma_gr, 10, "Number of time steps considered for gamma convergence check", time_grp)
+  call add_var_double("gamma_gr_stop_std", gamma_gr_stop_std, 0.01, "Standard deviation under which gamma is considered converged", time_grp)
+
+
   ! variable_timestep parameters
 
   call add_var_double("dtmin",dtmin,4.0,"minimum time step",time_grp)

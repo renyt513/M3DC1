@@ -551,6 +551,9 @@ In all cases, the angular velocity is then determined by:
   \texttt{ksp\_max}     & 10000 & max number of ksp iterations before repeating time step \\
   \texttt{ksp\_min}     & 1200  & increase dt if ksp < ksp\_min  \\
   \texttt{ksp\_warn}    & 1600  & decrease dt if ksp > ksp\_warn \\
+  \texttt{gamma\_gr\_stop}    & 0  & 1: if linear, terminate simulation as soon as growth rate gamma is converged \\
+  \texttt{nt\_gamma\_gr}    & 10  & number of time steps considered for gamma convergence check \\
+  \texttt{gamma\_gr\_stop\_std}    & 0.01  & standard deviation under which gamma is considered converged \\
 \end{tabular}
 
 \subsection{Mesh}

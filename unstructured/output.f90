@@ -16,6 +16,10 @@ contains
 
     integer :: ier
     
+    allocate(gamma_buffer(nt_gamma_gr))
+    gamma_buffer = 0.0
+    gamma_converged_flag = 0
+    
    call hdf5_initialize(irestart.ne.0, ier)
 
     if(ier.lt.0) then 
@@ -41,6 +45,10 @@ contains
 
     call hdf5_finalize(ier)
     if(ier.ne.0) print *, 'Error finalizing HDF5:',ier
+    
+   if (allocated(gamma_buffer)) then
+      deallocate(gamma_buffer)
+   end if
   end subroutine finalize_output
 
   ! ======================================================================
@@ -82,7 +90,7 @@ contains
     include 'mpif.h'
 
     integer :: ier
-    real :: tstart, tend, diff
+    real :: tstart, tend, diff, gamma_std, gamma_mean
 
     if(myrank.eq.0 .and. itimer.eq.1) call second(tstart)
     call hdf5_write_scalars(ier)
@@ -101,8 +109,31 @@ contains
 1003  format("OUTPUT: hdf5_write_scalars   ", I5, 1p2e16.8)
     endif
 
+    
+    !if(myrank.eq.0) then
+       if((ekin+ekino)*dtold.eq.0. .or. ekin.eq.0..or. ntime.eq.0) then
+          gamma_gr = 0.
+       else
+          gamma_gr = (ekin - ekino)/((ekin+ekino)*dtold)
+       endif
+      
+      ! In linear simulations check if growth rate is converged and set flag to terminate simulation
+      if(linear.eq.1 .and. gamma_gr_stop.eq.1) then
+         gamma_idx = mod(gamma_idx, nt_gamma_gr) + 1
+         gamma_buffer(gamma_idx) = gamma_gr
+         gamma_mean = sum(gamma_buffer) / real(size(gamma_buffer))
+         gamma_std  = sqrt( sum((gamma_buffer - gamma_mean)**2) / real(size(gamma_buffer)) )
+         
+         if ( (ntime-ntime0).ge.nt_gamma_gr ) then
+            if (abs(gamma_std/gamma_mean) .lt. gamma_gr_stop_std) then
+               gamma_converged_flag = 1
+            endif
+         endif
+      endif
+    !endif
+    
     ! only write field data evey ntimepr timesteps
-    if(mod(ntime-ntime0,ntimepr).eq.0) then
+    if((mod(ntime-ntime0,ntimepr).eq.0) .or. gamma_converged_flag.eq.1) then
        if(iwrite_aux_vars.eq.1) then
           if(myrank.eq.0 .and. iprint.ge.2) print *, "  calculating aux fields"
           call calculate_auxiliary_fields(eqsubtract)
@@ -152,14 +183,22 @@ contains
 
     ! Write C1ke data
     if(myrank.eq.0) then
-       if((ekin+ekino)*dtold.eq.0. .or. ekin.eq.0..or. ntime.eq.0) then
-          gamma_gr = 0.
-       else
-          gamma_gr = (ekin - ekino)/((ekin+ekino)*dtold)
-       endif
        write(ke_file, '(I8, 1p3e12.4,2x,1p3e12.4,2x,1p3e12.4,2x,1pe13.5)') &
             ntime, time, ekin, gamma_gr, &
             ekinp,ekint,ekin3, emagp, emagt, emag3, etot
+    endif
+
+
+    ! If growth rate is converged in linear simulation, stop code execution after output was written
+    if (gamma_converged_flag.eq.1) then
+      if (myrank.eq.0) then
+        print *, ' ============================================='
+        print *, ' Growth rate gamma has converged.'
+        print *, ' Simulation stopping at time step: ', ntime
+        print *, ' Time slice written before termination.'
+        print *, ' ============================================='
+      endif
+      call safestop(1)
     endif
   end subroutine output
 
