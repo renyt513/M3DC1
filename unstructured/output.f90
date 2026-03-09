@@ -103,7 +103,7 @@ contains
     endif
 
     ! only write field data evey ntimepr timesteps or after termination signal was sent by Slurm
-    if((mod(ntime-ntime0,ntimepr).eq.0) .or. checkpoint_flag.eq.1) then
+    if((mod(ntime-ntime0,ntimepr).eq.0) .or. timeout_flag.eq.1) then
        if(iwrite_aux_vars.eq.1) then
           if(myrank.eq.0 .and. iprint.ge.2) print *, "  calculating aux fields"
           call calculate_auxiliary_fields(eqsubtract)
@@ -164,11 +164,15 @@ contains
     endif
 
     ! If Slurm is terminating the job, stop code execution after output was written
-    if (checkpoint_flag.eq.1) then
-      if (myrank.eq.0) print *, 'SLURM SIGNAL RECEIVED (SIGUSR1)'
-      if (myrank.eq.0) print *, 'Time limit approaching or job preempted.'
-      if (myrank.eq.0) print *, 'Wrote final time slice before termination.'
-      call safestop(1)
+    if (timeout_flag.eq.1) then
+      if (myrank.eq.0) then
+        print *, ' ============================================='
+        print *, ' SLURM SIGNAL RECEIVED (SIGUSR1)'
+        print *, ' Time limit approaching or job preempted.'
+        print *, ' Time slice written before termination.'
+        print *, ' ============================================='
+      endif
+      call safestop(401)
     endif
   end subroutine output
 

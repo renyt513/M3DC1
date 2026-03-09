@@ -364,7 +364,7 @@ Program Reducedquintic
 
   if ((irunaway.ge.1).and.(ra_characteristics.eq.1)) call runaway_advection_initialize
 
-  call install_signal_handler()
+  if (write_ts_on_job_timeout.eq.1) call install_signal_handler()
 
   ! main time loop
   ! ~~~~~~~~~~~~~~

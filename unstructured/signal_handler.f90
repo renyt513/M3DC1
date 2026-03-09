@@ -3,10 +3,10 @@ module signal_handler
   implicit none
 
   ! Use integer, not logical, for signal safety
-  integer(c_int), volatile :: checkpoint_flag = 0
+  integer(c_int), volatile :: timeout_flag = 0
 
   private
-  public :: install_signal_handler, checkpoint_flag
+  public :: install_signal_handler, timeout_flag
 
   ! C struct sigset_t (size is platform dependent)
   ! On Linux x86_64 it is 128 bytes
@@ -46,7 +46,7 @@ contains
     integer(c_int), value :: sig
 
     ! ONLY set a flag — nothing else!
-    checkpoint_flag = 1
+    timeout_flag = 1
   end subroutine handle_signal
 
 
