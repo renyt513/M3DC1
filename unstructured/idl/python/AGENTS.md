@@ -110,6 +110,7 @@
   - In `plot_flux_average.py`, use a tolerance of `0.001` for sign/near-zero decisions.
   - `plot_flux_average('q', timeslices)` should build flux coordinates using the requested `timeslices` value, not silently fall back to slice `0`.
   - For `eqsubtract=1` files, flux-coordinate construction for `plot_flux_average('q', timeslices)` should use total fields at the requested slice, which means `read_field` combines the perturbation at `timeslices` with equilibrium slice `-1`.
+  - `flux_average.py` should preload `psi` for flux-coordinate construction with `equilibrium=False` and pass `slice=int(timeslices or 0)` into `flux_coordinates(...)`.
 - `flux_average_field.py` correctness fix:
   - Do not transpose the `field_at_point(...)` output before flux-surface averaging.
 - `field_spectrum.py` / `read_field_spectrum.py` / `plot_field_spectrum.py` conventions:
@@ -158,6 +159,16 @@
   - When `slice < 0`, `flux_coordinates.py` should still use `equilibrium=True` for equilibrium-only reads.
 - `read_field.py` equilibrium handling:
   - For `equilibrium=True` with `eqsubtract=1`, force reads to slice `-1` to avoid recursive total-field reconstruction loops.
+  - `flux_coordinates.py` should pass its `slice` argument through to `lcfs(...)` so LCFS quantities are read from the matching time slice.
+- `read_field.py` equilibrium handling:
+  - For `equilibrium=True` with `eqsubtract=1`, force reads to slice `-1` to avoid recursive total-field reconstruction loops.
+- `lcfs.py` / `read_lcfs.py` slice behavior:
+  - `lcfs.py` should accept an explicit `slice` argument and pass it directly to `read_lcfs(...)`.
+  - `read_lcfs.py` should respect negative slices in Python-style form, e.g. `slice=-1` means the last available slice.
+  - `read_lcfs.py` should reproduce the IDL print behavior:
+    - `slice time = ...`
+    - `time step time: ...`
+    - `time slice: ...`
 - Legend helper behavior:
   - `plot_legend.py` should not hardcode legend font size; it should follow the active Matplotlib rc settings.
   - `plot_legend.py` currently uses `frameon=False`.

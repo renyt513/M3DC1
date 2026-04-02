@@ -1020,6 +1020,8 @@ subroutine fdot(x, v, w, dxdt, dvdt, dwdt, dEpdt, itri, ierr)
    !else
    !dwdt = dwdt * (f00-w)
    !endif
+   else
+      dwdt = 0.
    endif
    if (linear_particle .eq. 1) then
       dxdt = -dxdt0
