@@ -29,6 +29,7 @@ Program Reducedquintic
   use m3dc1_vel_prof
   use hypervisc
   use runaway_advection
+  use signal_handler
 #ifdef _OPENACC
   use openacc
 #endif
@@ -51,7 +52,8 @@ Program Reducedquintic
   integer :: ip
   character(len=32) :: mesh_file_name
   logical :: update_mesh
-
+  type(c_funptr) :: sig_handler
+  type(c_funptr) :: old_handler
   ! Initialize MPI
 #ifdef _OPENMP
   integer :: omp_provided, omp_requested
@@ -344,6 +346,9 @@ Program Reducedquintic
   ! mark the fields necessary for solution transfer
   if (ispradapt .eq. 1) call marker
   
+  if(myrank.eq.0 .and. iprint.ge.1) print *, ' Initializing timestep'
+  call initialize_timestep
+
 #ifdef USEPARTICLES
   if (kinetic.eq.1) then
      call particle_test
@@ -357,10 +362,9 @@ Program Reducedquintic
   ! if there are no timesteps to calculate, then skip time loop
   if(ntimemax.le.ntime) call safestop(0)
 
-  if(myrank.eq.0 .and. iprint.ge.1) print *, ' Initializing timestep'
-  call initialize_timestep
+  if ((irunaway.ge.1).and.(ra_characteristics.eq.1)) call runaway_advection_initialize
 
-  if ((irunaway.ge.1).and.(runaway_characteristics.eq.1)) call runaway_advection_initialize
+  if (write_ts_on_job_timeout.eq.1) call install_signal_handler()
 
   ! main time loop
   ! ~~~~~~~~~~~~~~
@@ -745,6 +749,7 @@ subroutine derived_quantities(ilin)
   use transport_coefficients
   use auxiliary_fields
   use gradshafranov
+  use bootstrap
 
   implicit none
 
@@ -763,7 +768,12 @@ subroutine derived_quantities(ilin)
      if(linear.eq.1) then 
         if(ntime.eq.ntime0) then
           if(ifixed_temax .eq. 0) then
-            call te_max(xmag,zmag,te_field(0),temax,0,ier)
+            if(ibootstrap.eq.3) then
+               !call te_max3(xmag,zmag,te_field(0),temax,0,ier)
+               call te_max4(te_field(0),temax,linear,ier)
+            else
+               call te_max(xmag,zmag,te_field(0),temax,0,ier)
+            endif
           else
             call te_max2(xmag0,zmag0,te_field(0),temax,0,ier)
           endif
@@ -777,7 +787,12 @@ endif
         te_temp = te_field(0)
         call add_field_to_field(te_temp, te_field(1))
         if(ifixed_temax .eq. 0) then
-           call te_max(xmag,zmag,te_temp,temax,0,ier)
+            if(ibootstrap.eq.3) then
+               !call te_max3(xmag,zmag,te_temp,temax,0,ier)
+               call te_max4(te_temp,temax,linear,ier)
+            else
+               call te_max(xmag,zmag,te_temp,temax,0,ier)
+            endif  
         else
            call te_max2(xmag0,zmag0,te_temp,temax,0,ier)
         endif
@@ -785,7 +800,12 @@ endif
      endif
   else
      if(ifixed_temax .eq. 0) then
-       call te_max(xmag,zmag,te_field(1),temax,0,ier)
+      if(ibootstrap.eq.3) then
+         !call te_max3(xmag,zmag,te_field(1),temax,0,ier)
+         call te_max4(te_field(1),temax,linear,ier)
+      else
+         call te_max(xmag,zmag,te_field(1),temax,0,ier)
+      endif 
      else
        call te_max2(xmag0,zmag0,te_field(1),temax,0,ier)
      endif
@@ -1363,7 +1383,12 @@ if (ispradapt .eq. 1) then
      if(ibootstrap.gt.0) call create_field(Jbs_alpha_field, "Jbs_alpha")
      if(ibootstrap.gt.0) call create_field(Jbs_fluxavg_iBsq_field, "Jbs_fluxavg_iBsq")
      if(ibootstrap.gt.0) call create_field(Jbs_fluxavg_G_field, "Jbs_fluxavg_G")
-     if(ibootstrap.eq.2) call create_field(Jbs_dtedpsit_field, "Jbs_dtedpsit")
+     if(ibootstrap.eq.2 .or. ibootstrap.eq.3)  call create_field(Jbs_dtedpsit_field, "Jbs_dtedpsit")
+     
+     if(ibootstrap.eq.3) call create_field(Jbs_ftrap_field,"Jbs_ftrap_field")
+     if(ibootstrap.eq.3) call create_field(Jbs_qR_field,"Jbs_qR_field")
+     if(ibootstrap.eq.3) call create_field(Jbs_invAspectRatio_field,"Jbs_invApsectRatio_field")
+
 
      call create_field(psi_coil_field, "psi_coil")
 
@@ -1416,7 +1441,10 @@ else
      if(ibootstrap.gt.0) call create_field(Jbs_alpha_field)
      if(ibootstrap.gt.0) call create_field(Jbs_fluxavg_iBsq_field)
      if(ibootstrap.gt.0) call create_field(Jbs_fluxavg_G_field)
-     if(ibootstrap.eq.2) call create_field(Jbs_dtedpsit_field)
+     if(ibootstrap.eq.2 .or. ibootstrap.eq.3 ) call create_field(Jbs_dtedpsit_field)
+     if(ibootstrap.eq.3) call create_field(Jbs_ftrap_field)
+     if(ibootstrap.eq.3) call create_field(Jbs_qR_field)
+     if(ibootstrap.eq.3) call create_field(Jbs_invAspectRatio_field)
 
      call create_field(psi_coil_field)
 
@@ -1448,8 +1476,11 @@ endif
      call create_field(nfi_field)
      call create_field(tfi_field)
      call create_field(pfi_field)
-     call create_field(psmooth_field)
+     call create_field(densmooth_field)
      call create_field(vparsmooth_field)
+     call create_field(ustar_field)
+     call create_field(vzstar_field)
+     call create_field(chistar_field)
 #endif
 
      call create_auxiliary_fields
@@ -1568,10 +1599,12 @@ subroutine calculate_qdfac(itri, z)
 end subroutine calculate_qdfac
 
 subroutine print_normal_curv()
-  use mpi
+!  use mpi
   use basic
   use mesh_mod
   implicit none
+
+    include 'mpif.h'
 
   integer :: ierr, i, icounter_t, numnodes
   integer :: izone, izonedim

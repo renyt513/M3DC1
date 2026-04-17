@@ -40,15 +40,15 @@ PetscErrorCode MyKSPMonitor(KSP ksp, PetscInt n, PetscReal rnorm, void *dummy)
   ierr=KSPBuildSolution(ksp, NULL, &x);
   ierr=KSPBuildResidual(ksp, NULL, NULL, &r);
 
-  PetscCall(VecStrideNorm(r, 0*stride, NORM_2, &norms[0]));
-  PetscCall(VecStrideNorm(r, 1*stride, NORM_2, &norms[1]));
-  PetscCall(VecStrideNorm(r, 2*stride, NORM_2, &norms[2]));
+  ierr=VecStrideNorm(r, 0*stride, NORM_2, &norms[0]);
+  ierr=VecStrideNorm(r, 1*stride, NORM_2, &norms[1]);
+  ierr=VecStrideNorm(r, 2*stride, NORM_2, &norms[2]);
 
   ierr=PetscPrintf(PETSC_COMM_WORLD, 
 		  "solve 5 %" PetscInt_FMT "th iteration: KSP Residual norm [ %1.12e  %1.12e  %1.12e  %1.12e ]\n", 
 		  n, (double)norms[0], (double)norms[1], (double)norms[2], rnorm);
-  PetscCall(VecDestroy(&r));
-  PetscFunctionReturn(PETSC_SUCCESS);
+  ierr=VecDestroy(&r);
+  PetscFunctionReturn(0); // PETSC_SUCCESS (0) to indicate success
 }
 
 void printMemStat() {
@@ -60,7 +60,77 @@ void printMemStat() {
       << PCU_Comm_Self() << " current " << mem / 1e6 << std::endl;
 }
 
-int copyField2PetscVec(FieldID field_id, Vec &petscVec, int scalar_type) {
+int copyField2PetscVec_5(FieldID field_id, Vec petscVec, int scalar_type)
+{
+  int num_own_ent= m3dc1_mesh::instance()->num_own_ent[0];
+  int num_own_dof=0, vertex_type=0;
+  m3dc1_field_getnumowndof(&field_id, &num_own_dof);
+  int dofPerEnt=0;
+
+  PetscFunctionBeginUser;
+
+  if (num_own_ent) dofPerEnt = num_own_dof/num_own_ent;
+
+        if (!PCU_Comm_Self())
+          std::cout<<"[M3DC1 INFO] "<<__func__<<": MatCreateVecs\n";
+/*int ierr = VecCreateMPI(MPI_COMM_WORLD, num_own_dof, PETSC_DECIDE, &petscVec); 
+  int ierr = VecCreate(MPI_COMM_WORLD, &petscVec); CHKERRQ(ierr);
+  ierr=VecSetBlockSize(petscVec, dofPerEnt); // the blocksize=dofPerEnt, but the stridesize=dofPerEnt/3
+  ierr = VecSetSizes(petscVec, num_own_dof, PETSC_DECIDE); CHKERRQ(ierr);
+ * */
+  int ierr = VecSetFromOptions(petscVec);CHKERRQ(ierr);
+  VecAssemblyBegin(petscVec);
+
+  int num_vtx=m3dc1_mesh::instance()->num_local_ent[0];
+
+  double dof_data[FIXSIZEBUFF];
+  assert(sizeof(dof_data)>=dofPerEnt*2*sizeof(double));
+  int nodeCounter=0;
+
+  apf::Mesh2* mesh = m3dc1_mesh::instance()->mesh;
+  apf::MeshEntity* ent;
+  int inode;
+  apf::MeshIterator* ent_it = mesh->begin(0);
+  while ((ent = mesh->iterate(ent_it)))
+  {
+    inode = getMdsIndex(mesh, ent);
+    if (!is_ent_original(mesh,ent)) continue;
+    nodeCounter+=1;
+    int num_dof;
+    m3dc1_ent_getdofdata (&vertex_type, &inode, &field_id, &num_dof, dof_data);
+    assert(num_dof*(1+scalar_type)<=sizeof(dof_data)/sizeof(double));
+    int start_global_dof_id, end_global_dof_id_plus_one;
+    m3dc1_ent_getglobaldofid (&vertex_type, &inode, &field_id, &start_global_dof_id, &end_global_dof_id_plus_one);
+    int startIdx=0;
+    for (int i=0; i<dofPerEnt; ++i)
+    { 
+      PetscScalar value;
+      if (scalar_type == M3DC1_REAL) value = dof_data[startIdx++];
+      else 
+      {
+#ifdef PETSC_USE_COMPLEX
+        value = complex<double>(dof_data[startIdx*2],dof_data[startIdx*2+1]);
+#else
+        if (!PCU_Comm_Self())
+          std::cout<<"[M3DC1 ERROR] "<<__func__<<": PETSc is not configured with --with-scalar-type=complex\n";
+        abort();
+#endif
+        startIdx+=1;
+      } 
+      ierr = VecSetValue(petscVec, start_global_dof_id+i, value, INSERT_VALUES);
+      CHKERRQ(ierr);
+    }
+  }
+  mesh->end(ent_it);
+
+  assert(nodeCounter==num_own_ent);
+  ierr=VecAssemblyEnd(petscVec);
+  CHKERRQ(ierr);
+  PetscFunctionReturn(PETSC_SUCCESS);
+//  return 0;
+}
+
+int copyField2PetscVec(FieldID field_id, Vec petscVec, int scalar_type) {
   int num_own_ent = m3dc1_mesh::instance()->num_own_ent[0];
   int num_own_dof = 0, vertex_type = 0;
   m3dc1_field_getnumowndof(&field_id, &num_own_dof);
@@ -613,6 +683,7 @@ int m3dc1_matrix::setupParaMat() {
 
   ierr = MatSetType(_A, MATMPIAIJ);
   CHKERRQ(ierr);
+  ierr= MatSetOptionsPrefix(_A,"mhard_");
   ierr = MatSetFromOptions(_A);
   CHKERRQ(ierr);
   // cj  if (!PCU_Comm_Self()) std::cout<<"[M3DC1 INFO] "<<__func__<<":
@@ -688,6 +759,7 @@ void m3dc1_matrix::printInfo() {
 // ***********************************
 matrix_mult::matrix_mult(int i, int s, FieldID field)
     : m3dc1_matrix(i, s, field), localMat(1) {
+  mymatrix_id=i;
   initialize();
 }
 
@@ -700,7 +772,7 @@ int matrix_mult::initialize() {
   // disable error when preallocate not enough
   ierr = MatSetOption(_A, MAT_NEW_NONZERO_ALLOCATION_ERR, PETSC_FALSE);
   CHKERRQ(ierr);
-  ierr = MatSetOption(_A, MAT_IGNORE_ZERO_ENTRIES, PETSC_TRUE);
+  ierr = MatSetOption(_A, MAT_IGNORE_ZERO_ENTRIES, PETSC_FALSE);
   CHKERRQ(ierr);
   return M3DC1_SUCCESS;
 }
@@ -718,9 +790,10 @@ int matrix_mult::assemble() {
 int matrix_mult::multiply(FieldID in_field, FieldID out_field) {
   if (!localMat) {
     Vec b, c;
-    PetscCall(MatCreateVecs(_A, &c, &b));
+    int ierr;
+    ierr=MatCreateVecs(_A, &c, &b);
     copyField2PetscVec(in_field, b, get_scalar_type());
-    int ierr;//= VecDuplicate(b, &c);
+    //int ierr;= VecDuplicate(b, &c);
     //CHKERRQ(ierr);
     MatMult(_A, b, c);
     copyPetscVec2Field(c, out_field, get_scalar_type());
@@ -803,16 +876,17 @@ int matrix_mult::multiply(FieldID in_field, FieldID out_field) {
 
 matrix_solve::matrix_solve(int i, int s, FieldID f) : m3dc1_matrix(i, s, f) {
   _ksp=NULL;
-  BgmgSet = 0;
+  _BgmgSet = 0;
   _kspSet = 0;
   remotePidOwned = NULL;
   remoteNodeRow = NULL; // <pid, <locnode>, numAdj>
   remoteNodeRowSize = NULL;
+  mymatrix_id=i;
   initialize();
 }
 
 matrix_solve::~matrix_solve() {
-  if (BgmgSet) {
+  if (_BgmgSet) {
     int nlevels=mg_nlevels-1;
     for (int level = 0; level < nlevels; level++) {
       MatDestroy(&(mg_interp_mat[level]));
@@ -822,7 +896,7 @@ matrix_solve::~matrix_solve() {
     delete[] mg_interp_mat;
     delete[] mg_level_ksp;
     delete[] mg_level_pc;
-    BgmgSet = 0;
+    _BgmgSet = 0;
   }
 
   if (_kspSet) {
@@ -847,7 +921,7 @@ int matrix_solve::initialize() {
   // commented per Jin's request on Nov 9, 2017
   // ierr = MatSetOption(_A,MAT_NEW_NONZERO_ALLOCATION_ERR,PETSC_TRUE);
   // CHKERRQ(ierr);
-  ierr = MatSetOption(_A, MAT_IGNORE_ZERO_ENTRIES, PETSC_TRUE);
+  ierr = MatSetOption(_A, MAT_IGNORE_ZERO_ENTRIES, PETSC_FALSE);
   CHKERRQ(ierr);
   CHKERRQ(ierr);
   return M3DC1_SUCCESS;
@@ -875,7 +949,7 @@ int matrix_solve::reset_values() {
 
   mat_status = M3DC1_NOT_FIXED; // allow matrix value modification
   // start second solve
-  if (_kspSet == 1) {
+  if (_kspSet >= 1) {
     _kspSet = 2;
     // Set operators, keeping the identical preconditioner matrix for
     // all linear solves.  This approach is often effective when the
@@ -910,6 +984,33 @@ int matrix_solve::reset_values() {
     MatRestoreRow(remoteA, row, &ncols, &cols, &vals); // prevent memory leak
   }
 #endif
+  return M3DC1_SUCCESS;
+}
+
+int matrix_solve::update_values() 
+{ 
+  int ierr = MatZeroEntries(_A); 
+  //MatZeroEntries(remoteA); 
+    delete remotePidOwned;
+    delete remoteNodeRow;
+    delete remoteNodeRowSize;
+    ierr =MatDestroy(&remoteA);
+    if (!m3dc1_solver::instance()->assembleOption) setUpRemoteAStruct();
+
+  mat_status = M3DC1_NOT_FIXED; // allow matrix value modification
+  //start second solve
+  if(_kspSet>=1) 
+  {
+    _kspSet=3;
+    // we set this manually (true) to get KSP to not setup, and need to turn on now
+    ierr= KSPSetReusePreconditioner(_ksp,PETSC_FALSE); CHKERRQ(ierr);
+    ierr= KSPSetOperators(_ksp,_A,_A); CHKERRQ(ierr);
+         if (!PCU_Comm_Self())
+           std::cout <<"\t-- Update A, Update Preconditioner" << std::endl;
+  }
+  
+  if (!PCU_Comm_Self())
+    std::cout<<"[M3DC1 INFO] "<<__func__<<": mat_status=M3DC1_NOT_FIXED "<<mat_status<<" kspSet="<<_kspSet<<"\n";
   return M3DC1_SUCCESS;
 }
 
@@ -1188,9 +1289,10 @@ int matrix_solve::set_row(int row, int numVals, int *columns, double *vals) {
 
 int matrix_solve::solve(FieldID field_id) {
   Vec x, b;
-  PetscCall(MatCreateVecs(_A, &x, &b));
-  copyField2PetscVec(field_id, b, get_scalar_type());
-  int ierr;//= VecDuplicate(b, &x);
+  int ierr;
+  ierr=MatCreateVecs(_A, &x, &b);
+  copyField2PetscVec_5(field_id, b, get_scalar_type());
+  //int ierr;= VecDuplicate(b, &x);
   //CHKERRQ(ierr);
 
   if (!_kspSet)
@@ -1228,9 +1330,10 @@ int matrix_solve::solve(FieldID field_id) {
 // solve with non-zero initial guess
 int matrix_solve::solve_with_guess(FieldID field_id, FieldID xVec_guess) {
   Vec x, b;
-  copyField2PetscVec(field_id, b, get_scalar_type());
-  copyField2PetscVec(xVec_guess, x, get_scalar_type());
   int ierr;
+  ierr=MatCreateVecs(_A, &x, &b);
+  copyField2PetscVec_5(field_id, b, get_scalar_type());
+  copyField2PetscVec_5(xVec_guess, x, get_scalar_type());
   KSPType ksptype;
 
   if (!_kspSet)
@@ -1288,7 +1391,7 @@ int matrix_solve::setKspType() {
     if (!PCU_Comm_Self())
       std::cout << "[M3DC1 INFO] " << __func__ << ": matrix " << mymatrix_id
                 << " is going to use BGMG preconditioner" << "\n";
-    if (!BgmgSet)
+    if (!_BgmgSet)
       setBgmgType();
   }
 
@@ -1305,7 +1408,7 @@ int matrix_solve::setKspType() {
   CHKERRQ(ierr);
 
   PetscBool flg = PETSC_FALSE;
-  PetscCall(PetscOptionsGetBool(NULL, NULL, "-ksp_monitor_5", &flg, NULL));
+  ierr=PetscOptionsGetBool(NULL, NULL, "-ksp_monitor_5", &flg, NULL);
   if (flg && mymatrix_id==5) ierr=KSPMonitorSet(_ksp, MyKSPMonitor, NULL, 0);
 
   int num_values, value_type, total_num_dof;
@@ -1347,6 +1450,7 @@ int matrix_solve::setKspType() {
            */
     if (mymatrix_id == 5)
       ierr = KSPSetOptionsPrefix(_ksp, "hard_");
+      ierr = MatViewFromOptions(_A, NULL, "-A_view");
   }
 
   ierr = KSPSetFromOptions(_ksp);
@@ -1432,15 +1536,15 @@ int matrix_solve::setBgmgType() {
   ierr= KSPGetPC(*ksp,&pcksp);
   ierr= PCSetType(pcksp,PCKSP);
   KSP ksprich;
-  PetscCall(PCKSPGetKSP(pcksp, &ksprich));
-  PetscCall(KSPSetType(ksprich, KSPRICHARDSON));
-  PetscCall(KSPSetTolerances(ksprich, PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT, 1));
-  PetscCall(KSPSetNormType(ksprich, KSP_NORM_NONE));
-  PetscCall(KSPSetConvergenceTest(ksprich, KSPConvergedSkip, NULL, NULL));
+  ierr=PCKSPGetKSP(pcksp, &ksprich);
+  ierr=KSPSetType(ksprich, KSPRICHARDSON);
+  ierr=KSPSetTolerances(ksprich, PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT, 1);
+  ierr=KSPSetNormType(ksprich, KSP_NORM_NONE);
+  ierr=KSPSetConvergenceTest(ksprich, KSPConvergedSkip, NULL, NULL);
 
-  PetscCall(KSPGetPC(ksprich, &pcmg));
+  ierr=KSPGetPC(ksprich, &pcmg);
 #else
-    PetscCall(KSPGetPC(_ksp, &pcmg));
+    ierr=KSPGetPC(_ksp, &pcmg);
 #endif
   //    ierr= KSPCreate(PETSC_COMM_WORLD,&ksp);
   ierr = KSPSetOptionsPrefix(_ksp, "hard_");
@@ -1525,6 +1629,7 @@ int matrix_solve::setBgmgType() {
 
   for (int level = 0; level < mg_nlevels - 1; level++) {
     ierr = MatCreate(PETSC_COMM_WORLD, &mg_interp_mat[level]);
+    ierr= MatSetOptionsPrefix(mg_interp_mat[level],"mhard_");
 
     ierr = MatSetSizes(
         mg_interp_mat[level], mg_num_own_ent[level + 1] * dofPerEnt,
@@ -1585,7 +1690,6 @@ int matrix_solve::setBgmgType() {
     //   -A_view binary[:[filename][:[ascii_info][:append]]]
     //   -A_view binary[:[filename][:[ascii_info_detail][:append]]]
     //   -A_view binary[:[filename][:[ascii_matlab][:append]]]
-    ierr = MatViewFromOptions(_A, NULL, "-A_view");
     if (level == 0)
       ierr = MatViewFromOptions(mg_interp_mat[level], NULL, "-I0_view");
     if (level == 1)
@@ -1630,7 +1734,7 @@ int matrix_solve::setBgmgType() {
   ierr = PetscFree(mg_offset);
   ierr = PetscFree(mg_planeid);
   ierr = PetscFree(mg_nplanes);
-  BgmgSet = 1;
+  _BgmgSet = 1;
   return M3DC1_SUCCESS;
 }
 

@@ -428,8 +428,8 @@ subroutine set_defaults
   call add_var_int("cre", cre, 0, "", model_grp)
   call add_var_int("ra_cyc", ra_cyc, 1, "", model_grp)
   call add_var_double("radiff", radiff, 0., "", model_grp)
-  call add_var_double("rjra", rjra, 0., "", model_grp)
-  call add_var_int("runaway_characteristics", runaway_characteristics, 0, &
+  call add_var_double("rjra", rjra, 1., "", model_grp)
+  call add_var_int("ra_characteristics", ra_characteristics, 0, &
        "1: Use the method of characteristics to advance the RE advection equation", model_grp)
   call add_var_int("imp_bf", imp_bf, 0, &
        "1: Include implicit equation for f", model_grp)
@@ -460,8 +460,6 @@ subroutine set_defaults
        "1: J_BS = alpha F <p,psi> B", model_grp)
   call add_var_double("bootstrap_alpha", bootstrap_alpha, 0., &
        "alpha parameter in bootstrap current model", model_grp)
-  call add_var_int("ibootstrap_map_te", ibootstrap_map_te, 0, &
-       "Mapping paramater for bootstrap coefficients 0=Psi_n, 1=Te", model_grp)   
   call add_var_double("ibootstrap_regular", ibootstrap_regular, 1e-8, &
        "Regularization parameter Default=1e-8", model_grp)     
   call add_var_int("kinetic", kinetic, 0, &
@@ -489,7 +487,7 @@ subroutine set_defaults
   call add_var_double("harned_mikic", harned_mikic, 0., "", time_grp)
   call add_var_int("isources", isources, 0, "", time_grp)
   call add_var_int("nskip", nskip, 1, "", time_grp)
-  call add_var_int("pskip", pskip, 1, "", time_grp)
+  call add_var_int("pskip", pskip, 0, "", time_grp)
   call add_var_int("iskippc", iskippc, 1, "", time_grp)
   call add_var_double("dt", dt, 0.1, &
        "Size of time step", time_grp)
@@ -498,13 +496,18 @@ subroutine set_defaults
   call add_var_double("frequency", frequency, 0., &
        "Frequency in time-independent calculations", time_grp)
 
+  call add_var_int("gamma_gr_stop", gamma_gr_stop, 0, "Stop linear simulation when growth rate gamma is converged", time_grp)
+  call add_var_int("nt_gamma_gr", nt_gamma_gr, 10, "Number of time steps considered for gamma convergence check", time_grp)
+  call add_var_double("gamma_gr_stop_std", gamma_gr_stop_std, 0.01, "Standard deviation under which gamma is considered converged", time_grp)
+
+
   ! variable_timestep parameters
 
   call add_var_double("dtmin",dtmin,4.0,"minimum time step",time_grp)
   call add_var_double("dtmax",dtmax,40.,"maximum time step",time_grp)
   call add_var_double("dtkecrit",dtkecrit,0.0,"ekin limit on timestep",time_grp)
   call add_var_double("dtfrac",dtfrac,0.1,"fractional change of time step",time_grp)
-  call add_var_int("max_repeat", max_repeat, 3, &
+  call add_var_int("max_repeat", max_repeat, 1, &
        "maximum number of times a time step can be attempted", time_grp)
   call add_var_int("ksp_max", ksp_max, 10000, &
        "maximum number of ksp iterations without repeating time step", time_grp)
@@ -671,6 +674,7 @@ subroutine set_defaults
   call add_var_double("zlim2", zlim2, 0., &
        "Z-coordinate of limiter #2", gs_grp)
   call add_var_double("rzero", rzero, -1., "", gs_grp)
+  call add_var_double("psifrac", psifrac, 1., "Fraction of poloidal flux from psimin to psibound used for the mesh", gs_grp)
   call add_var_double("libetap", libetap, 1.2, "", gs_grp)
   call add_var_double("p0", p0, 0.01, "", gs_grp)
   call add_var_double("pi0", pi0, 0.005, "", gs_grp)
@@ -1061,6 +1065,8 @@ subroutine set_defaults
        "1: Output auxiliary variable fields", output_grp)
   call add_var_int("iwrite_adjacency", iwrite_adjacency, 1, &
        "1: Output mesh adjacency info", output_grp)
+  call add_var_int("iwrite_quad_points", iwrite_quad_points, 0, &
+       "1: Output integration quadrature points", output_grp)
   call add_var_int("itemp_plot", itemp_plot, 0, &
        "1: Output additional temperature plots", output_grp)
   call add_var_int("ibdgp", ibdgp, 0, &
@@ -1072,6 +1078,9 @@ subroutine set_defaults
 
   call add_var_int("iveldif", iveldif, 0, &
        "ne.0: veldif plot contains only partial results ", output_grp)
+  call add_var_int("write_ts_on_job_timeout", write_ts_on_job_timeout, 0, &
+       "1: Write time slice and stop code before job hits timeout or is preempted", output_grp)
+
   ! diagnostics
   call add_var_int("xray_detector_enabled", xray_detector_enabled, 0, &
        "1: enable xray detector", diagnostic_grp)
@@ -1257,19 +1266,23 @@ subroutine set_defaults
        "1: Enable thermal ion PIC and density coupling between MHD and PIC", particle_grp)
   call add_var_int("igyroaverage", igyroaverage, 0, &
        "1: Enable gyro-averaging for PIC simulation", particle_grp)
-  call add_var_int("particle_linear", particle_linear, linear, &
+  call add_var_int("particle_linear", particle_linear, -1, &
        "1: Solve linear delta-f equation. 0: Include nonlinear terms in delta-f", particle_grp)
   call add_var_int("particle_substeps", particle_substeps, 40, &
        "Number of substeps for particle pushing in one subcycle", particle_grp)
   call add_var_int("particle_subcycles", particle_subcycles, 1, &
        "Number of subcycles for particle pushing in one MHD timestep", particle_grp)
   call add_var_int("particle_couple", particle_couple, 0, &
-       "0: Pressure coupling. 1: Current coupling", particle_grp)
+       "-1: No coupling (test particle). 0: Pressure coupling. 1: Current coupling", particle_grp)
+  call add_var_int("particle_nodelete", particle_nodelete, 0, &
+       "Do not call delete_particle, keep particles' order", particle_grp)
   call add_var_int("iconst_f0", iconst_f0, 0, &
        "Use a constant f0 for delta-f equation", particle_grp)
-  call add_var_double("fast_ion_mass", fast_ion_mass, ion_mass, &
+  call add_var_int("ifullf", ifullf, 0, &
+       "Do full-f simulation", particle_grp)
+  call add_var_double("fast_ion_mass", fast_ion_mass, 0., &
        "Fast ion mass (in units of m_p)", particle_grp)
-  call add_var_double("fast_ion_z", fast_ion_z, z_ion, &
+  call add_var_double("fast_ion_z", fast_ion_z, 0., &
        "Zeff of fast ion", particle_grp)
   call add_var_int("fast_ion_dist", fast_ion_dist, 1, &
        "Type of fast ion distribution function. 0: Read 3D distribution from file. 1: Maxwellian. &
@@ -1288,10 +1301,16 @@ subroutine set_defaults
        "Maximum rho for kinetic particle", particle_grp)
   call add_var_double("vpar_reduce", vpar_reduce, 0.5, &
        "Factor of parallel flow reduction for every timestep", particle_grp)
+  call add_var_int("idiamagnetic_advection", idiamagnetic_advection, 0, &
+       "1: Enable diamagnetic velocity advection term in momentum equation", particle_grp)
+  call add_var_int("imode_filter", imode_filter, 0, &
+       "Number of toroidal mode to be filtered", particle_grp)
+  call add_var_int_array("mode_filter_ntor", mode_filter_ntor, imode_filter_max, 0, &
+       "Toroidal mode number to be filtered", particle_grp)
   call add_var_double("smooth_par", smooth_par, 1.e-8, &
        "Smoothing factor for particle pressure", particle_grp)
-  call add_var_double("smooth_pres", smooth_pres, 1.e-8, &
-       "Smoothing factor for electron pressure used for calculating parallel electric field", particle_grp)
+  call add_var_double("smooth_dens_parallel", smooth_dens_parallel, 0., &
+       "Smoothing factor for electron density in parallel direction, used for calculating parallel electric field", particle_grp)
 #endif
 
   ! Deprecated
@@ -1737,7 +1756,17 @@ subroutine validate_input
   endif
 
 #ifdef USEPARTICLES
-  if(kinetic_thermal_ion.eq.0) particle_subcycles=0
+  if(particle_linear.eq.-1) particle_linear=linear
+
+  if(eqsubtract.eq.0) ifullf=1
+
+  if(ifullf.eq.1) particle_linear=0
+
+  if(fast_ion_mass.eq.0) fast_ion_mass=ion_mass
+
+  if(fast_ion_z.eq.0) fast_ion_z=z_ion
+
+  if(kinetic_thermal_ion.eq.0) particle_subcycles=1
 #endif
 
   if(itemp.eq.0 .and. kappai_fac.ne.1.) then
@@ -1751,6 +1780,7 @@ subroutine validate_input
   p0_norm = b0_norm**2/(4.*pi)
   e0_norm = v0_norm*b0_norm / c_light
   j0_norm = c_light*b0_norm/(4.*pi*l0_norm)
+  !write(0,*) 'v0_norm',v0_norm/100
 
   ! For pure Hydrogen plasma
   ! nu_e = nufac * n_e / T_e^(3/2) 

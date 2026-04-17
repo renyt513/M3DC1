@@ -1,12 +1,15 @@
 ! Module containing terms 
-!
+! ibootstrap =1,2,3
+! 1: to use psi (B×∇a).∇ϕ=-‖B_p ‖^2  ∂a/∂ψ ---- ∂/∂ψ=-1/‖B_p ‖^2   1/R ((1/R ψ_z+f_ϕR )  ∂/∂z+(1/R ψ_r-f_ϕz )  ∂/∂r)'
+!'2: to use te: da/dpsit=da/dte dte/dpsit'
+!'3: to use tenorm: da/dpsit=da/dte dte/dpsit=-temax da/dte dtenorm/dpsit'
+
 module bootstrap
   
   implicit none
   integer, private, parameter :: dp = selected_real_kind(15,307)
   integer :: ibootstrap_model
   real :: ibootstrap_regular
-  integer :: ibootstrap_map_te  ! Switch for bootstrap current coefficients mapping either as a function of (0) Psi_normal or (1) Te 
   ! 1 : add -eta*J_BS term to Ohm's law
   !     where J_BS = jbscommon * B
     
@@ -985,7 +988,6 @@ function bs_b1psifbb(e,f,g,h,i)
   subroutine calculate_CommonTerm_Lambda_fordtedpsit(temp1,temp2,tempAA, tempBB, tempCC)
   !ibootstrap=2 using dte/dpsit: da/dpsit=da/dTe dTe/dpsit = (del a.del Te)/(|del Te|^2 + chi^2) dTe/dpsit
 
-
    !Sauter & Angioni (1999): ibootstrap_model=3: ! equivalent to 1 but a simplified version
     !temp3 = A = -  2piq F L31 p d lnp  /d psit               =  (del p.del Te)/(|del Te|^2 + chi^2) dTe/dpsit
     !temp4 = B = -  2piq F L32 Pe d lnTe /d psit              =  pe/Te  dTe/dpsit 
@@ -1013,7 +1015,7 @@ function bs_b1psifbb(e,f,g,h,i)
   
     implicit none
   
-    vectype, dimension(MAX_PTS) :: tempDD, tempAA, tempBB, tempCC, temp1, temp2, iBpsq, temp_delmagTe, temp_delTe
+    vectype, dimension(MAX_PTS) :: tempDD, tempAA, tempBB, tempCC, temp1, temp2, iBpsq, temp_delmagTe
     vectype, dimension(MAX_PTS) :: chisq,const1,adaptive_regularization
     integer :: i
     real(dp):: tempbeta,tempvar
@@ -1036,7 +1038,7 @@ function bs_b1psifbb(e,f,g,h,i)
 ! Compute the regularized expression
 ! regularized_expression = (dot(del_p, del_Te)) / (grad_Te_magnitude**2 + adaptive_regularization)
 
-   do i = 1, MAX_PTS
+   do i = 1, npoints
       tempbeta=temp_delmagTe(i)
       chisq(i) = ibootstrap_regular / (1.0 + 1e-2 * tempbeta) 
     enddo
@@ -1142,6 +1144,8 @@ function bs_b1psifbb(e,f,g,h,i)
                 call calculate_CommonTerm_Lambda(temp79a,temp79b,temp79c,temp79d,temp79e)
               else if (ibootstrap.eq.2)then
                 call calculate_CommonTerm_Lambda_fordtedpsit(temp79a,temp79b,temp79c,temp79d,temp79e)
+              else if (ibootstrap.eq.3)then
+                call calculate_CommonTerm_Lambda_fordtenormdpsit(temp79a,temp79b,temp79c,temp79d,temp79e)
               endif
              temp = intx5(e(:,:,OP_DRP),ri3_79,h(:,OP_DZ),temp79a,eta79(:,OP_1)) &
                     - intx5(e(:,:,OP_DZP),ri3_79,h(:,OP_DR),temp79a,eta79(:,OP_1))
@@ -1186,6 +1190,8 @@ function bs_b1psifbb(e,f,g,h,i)
             call calculate_CommonTerm_Lambda(temp79a,temp79b,temp79c,temp79d,temp79e)
           else if (ibootstrap.eq.2)then
             call calculate_CommonTerm_Lambda_fordtedpsit(temp79a,temp79b,temp79c,temp79d,temp79e)
+          else if (ibootstrap.eq.3)then
+            call calculate_CommonTerm_Lambda_fordtenormdpsit(temp79a,temp79b,temp79c,temp79d,temp79e)
           endif
            temp = intx4(e(:,:,OP_1),temp79a,h(:,OP_1),eta79(:,OP_1))
    
@@ -1199,6 +1205,8 @@ function bs_b1psifbb(e,f,g,h,i)
             call calculate_CommonTerm_Lambda(temp79a,temp79b,temp79c,temp79d,temp79e)
           else if (ibootstrap.eq.2)then
             call calculate_CommonTerm_Lambda_fordtedpsit(temp79a,temp79b,temp79c,temp79d,temp79e)
+          else if (ibootstrap.eq.3)then
+            call calculate_CommonTerm_Lambda_fordtenormdpsit(temp79a,temp79b,temp79c,temp79d,temp79e)
           endif
            temp = intx5(e(:,:,OP_GS),ri2_79,temp79a,h(:,OP_1),eta79(:,OP_1))
    
@@ -1242,6 +1250,8 @@ function bs_b1psifbb(e,f,g,h,i)
             call calculate_CommonTerm_Lambda(temp79a,temp79b,temp79c,temp79d,temp79e)
           else if (ibootstrap.eq.2)then
             call calculate_CommonTerm_Lambda_fordtedpsit(temp79a,temp79b,temp79c,temp79d,temp79e)
+          else if (ibootstrap.eq.3)then
+            call calculate_CommonTerm_Lambda_fordtenormdpsit(temp79a,temp79b,temp79c,temp79d,temp79e)
           endif
    
          temp = intx5(e(:,:,OP_DRP),ri2_79,temp79a,h(:,OP_DR),eta79(:,OP_1)) &
@@ -1283,6 +1293,8 @@ function bs_b1psifbb(e,f,g,h,i)
       call calculate_CommonTerm_Lambda(temp79a,temp79b,temp79c,temp79d,temp79e)
     else if (ibootstrap.eq.2)then
       call calculate_CommonTerm_Lambda_fordtedpsit(temp79a,temp79b,temp79c,temp79d,temp79e)
+    else if (ibootstrap.eq.3)then
+      call calculate_CommonTerm_Lambda_fordtenormdpsit(temp79a,temp79b,temp79c,temp79d,temp79e)
     endif
    
      temp = intx5(e(:,:,OP_DZ),ri2_79,h(:,OP_DZ),temp79a,eta79(:,OP_1)) &
@@ -1317,6 +1329,8 @@ function bs_b1psifbb(e,f,g,h,i)
     call calculate_CommonTerm_Lambda(temp79a,temp79b,temp79c,temp79d,temp79e)
   else if (ibootstrap.eq.2)then
     call calculate_CommonTerm_Lambda_fordtedpsit(temp79a,temp79b,temp79c,temp79d,temp79e)
+  else if (ibootstrap.eq.3)then
+    call calculate_CommonTerm_Lambda_fordtenormdpsit(temp79a,temp79b,temp79c,temp79d,temp79e)
   endif
    
      temp = intx5(e(:,:,OP_DZ),ri_79,h(:,OP_DR),temp79a,eta79(:,OP_1)) &
@@ -1450,6 +1464,373 @@ function bs_b1psifbb(e,f,g,h,i)
      end if
    end subroutine bootstrap_axial_field_simplified
 
+
+
+
+  !calculating coefficients
+  subroutine calculate_Coefficients_Redl()
+     
+    use math
+    use basic
+    use m3dc1_nint
+  
+    implicit none
+  
+    ! generated/computed within M3D-C1 based on ftrap/qR & invAspectRatio inputs
+    vectype, dimension(MAX_PTS) :: ln_lambda_e,ln_lambda_i,nu_e_star,nu_i_star
+    vectype, dimension(MAX_PTS) :: f_t31,f_t32_ee,f_t32_ei,f_t33,alpha_0,F32ee,F32ei
+    vectype, dimension(MAX_PTS) :: temp,telec,tion,denelec,denion
+    integer :: i,Zcharge,Zcharge_eff,Zcharge_i
+  
+    real(dp):: tempval,eps_val
+
+    ! Intializing
+    jbsl3179 = 0.0; jbsl3279 = 0.0; jbsl3479 = 0.0; jbsalpha79 = 0.0
+    ln_lambda_e = 0.0; ln_lambda_i = 0.0; nu_e_star = 0.0; nu_i_star = 0.0
+    f_t31 = 0.0; f_t32_ee = 0.0; f_t32_ei = 0.0; f_t33 = 0.0; alpha_0 = 0.0; F32ee = 0.0; F32ei = 0.0
+    temp = 0.0; telec = 0.0; tion = 0.0; denelec = 0.0; denion = 0.0
+
+    eps_val=ibootstrap_regular**2
+
+    Zcharge_eff = 1.
+    Zcharge = 1.
+    Zcharge_i =1.
+    !--------------------------------------------------------!
+    ! Calculate ln_lambda_e and nu_e_star for electrons
+    !--------------------------------------------------------!
+    
+    do i = 1, npoints
+      telec(i)=max(real(tet79(i,OP_1))*1e3/(1.6022e-9 * (4.*pi*n0_norm)/ (b0_norm**2)),eps_val)
+      tion(i)=max(real(tit79(i,OP_1))*1e3/(1.6022e-9 * (4.*pi*n0_norm)/ (b0_norm**2)),eps_val)
+      denelec(i)=max(real(net79(i,OP_1))*1e20,eps_val)
+      denion(i)=max(real(nt79(i,OP_1))*1e20,eps_val)
+
+      !inverseaspect_ratio & ftrap can't be negative
+      jbs_invAspectRatio79(i, OP_1) = max(real(jbs_invAspectRatio79(i, OP_1)),eps_val)
+      jbs_ftrap79(i, OP_1) = max(real(jbs_ftrap79(i, OP_1)),eps_val)
+
+      ln_lambda_e(i) = 31.3 - log(sqrt(denelec(i)) / abs(telec(i)))
+      temp(i) = 6.921e-18 * Zcharge * (denelec(i)) * ln_lambda_e(i) / &
+            (telec(i))**2 / jbs_invAspectRatio79(i, OP_1)**(1.5) * jbs_qR79(i, OP_1)
+      
+      nu_e_star(i) = max(real(temp(i)),eps_val)
+
+      !--------------------------------------------------------!
+      ! Calculate ln_lambda_i and nu_i_star for ions
+      !--------------------------------------------------------!
+      Zcharge = Zcharge_i  ! Use ion charge state
+      ln_lambda_i(i) = 30.0 - log(Zcharge**3 * sqrt(denion(i)) / &
+                        (abs(tion(i)))**1.5)
+
+      temp(i) = 4.9e-18 * (denion(i)) * Zcharge**4 * ln_lambda_i(i) / &
+                (tion(i))**2 / jbs_invAspectRatio79(i, OP_1)**1.5 * jbs_qR79(i, OP_1)
+
+      nu_i_star(i) = max(real(temp(i)),eps_val)
+
+    enddo
+    !--------------------------------------------------------!
+    !--------------------------------------------------------!
+    ! Calculating coefficients L31,32,34,alpha
+    !--------------------------------------------------------!
+    !--------------------------------------------------------!
+    do i = 1, npoints
+      ! Calculate f_t31
+      !--------------------------------------------------------!
+      temp(i) = 1.0 + &
+                0.67 * (1.0 - 0.7 * jbs_ftrap79(i,OP_1)) * sqrt(nu_e_star(i)) / (0.56 + 0.44 * Zcharge_eff) + &
+                (0.52 + 0.086 * sqrt(nu_e_star(i))) * (1.0 + 0.87 * jbs_ftrap79(i,OP_1)) * nu_e_star(i) / &
+                (1.0 + 1.13 * sqrt(Zcharge_eff - 1.0))
+      f_t31(i) = jbs_ftrap79(i,OP_1) / temp(i)
+
+      ! Calculate jbsl3179 (L31)
+      !--------------------------------------------------------!
+      jbsl3179(i,OP_1) = (1.0 + 0.15 / (Zcharge_eff**1.2 - 0.71)) * f_t31(i) - &
+                        0.22 / (Zcharge_eff**1.2 - 0.71) * f_t31(i)**2 + &
+                        0.01 / (Zcharge_eff**1.2 - 0.71) * f_t31(i)**3 + &
+                        0.06 / (Zcharge_eff**1.2 - 0.71) * f_t31(i)**4
+
+      ! Calculate jbsl3479 (L34)
+      !--------------------------------------------------------!
+      jbsl3479(i,OP_1) = jbsl3179(i,OP_1)
+
+      ! Calculate f_t32_ee
+      !--------------------------------------------------------!
+      temp(i) = 1. +&
+               0.23 * (1. - 0.96 * jbs_ftrap79(i,OP_1)) * (nu_e_star(i))**0.5 /Zcharge_eff**0.5 +&
+               0.13 * (1. - 0.38 * jbs_ftrap79(i,OP_1)) * nu_e_star(i) /Zcharge_eff**2 *&
+               ((1. + 2. * (Zcharge_eff - 1)**0.5)**0.5 + &
+               jbs_ftrap79(i,OP_1)**2 * (((0.075 + 0.25 * (Zcharge_eff - 1)**2))* nu_e_star(i))**0.5)
+                
+       
+      f_t32_ee(i) = jbs_ftrap79(i,OP_1) / temp(i)
+
+      ! Calculate F32ee
+      !--------------------------------------------------------!
+      tempval = f_t32_ee(i)
+      F32ee(i) = (0.1 + 0.6 * Zcharge_eff) / (Zcharge_eff * (0.77 + 0.63 * (1 + (Zcharge_eff - 1)**1.1))) * &
+                  (tempval - tempval**4) + &
+                  (0.7) / (1. + 0.2 * Zcharge_eff) * (tempval**2 - tempval**4 - 1.2 * (tempval**3 - tempval**4)) + &
+                   (1.3) / (1. + 0.5 * Zcharge_eff) * tempval**4
+      
+
+      ! Calculate f_t32_ei
+      !--------------------------------------------------------!
+      temp(i) = 1.0 + &
+                0.87 * (1.0 + 0.39 * jbs_ftrap79(i,OP_1)) * sqrt(nu_e_star(i)) / &
+                (1.0 + 2.95 * (Zcharge_eff - 1.0)**2) + &
+                1.53 * (1.0 - 0.37 * jbs_ftrap79(i,OP_1)) * nu_e_star(i) * &
+                (2.0 + 0.375 * (Zcharge_eff - 1.0))
+      f_t32_ei(i) = jbs_ftrap79(i,OP_1) / temp(i)
+
+      ! Calculate F32ei
+      tempval = f_t32_ei(i)
+      F32ei(i) = -(0.4 + 1.93 * Zcharge_eff) / (Zcharge_eff * (0.8 + 0.6 * Zcharge_eff)) * &
+                    (tempval - tempval**4) + &
+                    5.5 / (1.5 + 2.0 * Zcharge_eff) * (tempval**2 - tempval**4 - 0.8 * (tempval**3 - tempval**4)) - &
+                    1.3 / (1.0 + 0.5 * Zcharge_eff) * tempval**4
+
+      ! Calculate jbsl3279 (L32)
+      !--------------------------------------------------------!
+      jbsl3279(i,OP_1) = F32ee(i) + F32ei(i)
+
+
+
+      ! Calculate f_t33
+      temp(i) = 1.0 + &
+                0.25 * (1.0 - 0.7 * jbs_ftrap79(i,OP_1)) * sqrt(nu_e_star(i)) * &
+                (1.0 + 0.45 * sqrt(Zcharge_eff - 1.0)) + &
+                0.61 * (1.0 - 0.41 * jbs_ftrap79(i,OP_1)) * nu_e_star(i) / Zcharge_eff * 0.5
+      f_t33(i) = jbs_ftrap79(i,OP_1) / temp(i)
+
+      ! Calculate jbsalpha79 
+      !--------------------------------------------------------!
+      alpha_0(i) = -((0.62 + 0.055 * (Zcharge_eff - 1.0)) / &
+                (0.53 + 0.17 * (Zcharge_eff - 1.0))) * &
+                (1.0 - jbs_ftrap79(i,OP_1)) / &
+                (1.0 - (0.31 - 0.065 * (Zcharge_eff - 1.0)) * jbs_ftrap79(i,OP_1) - 0.25 * jbs_ftrap79(i,OP_1)**2)
+
+      jbsalpha79(i,OP_1) = ((alpha_0(i) + 0.7 * Zcharge_eff * sqrt(jbs_ftrap79(i,OP_1)) * sqrt(nu_i_star(i))) / &
+                          (1.0 + 0.18 * sqrt(nu_i_star(i))) - &
+                          0.002 * nu_i_star(i)**2 * jbs_ftrap79(i,OP_1)**6) / &
+                          (1.0 + 0.004 * nu_i_star(i)**2 * jbs_ftrap79(i,OP_1)**6)
+
+    enddo
+    
+   end subroutine calculate_Coefficients_Redl
+
+!calculating bootstrap current
+subroutine calculate_CommonTerm_Lambda_fordtenormdpsit(temp1,temp2,tempAA, tempBB, tempCC)
+  !ibootstrap=3 3: to use tenorm: da/dpsit=da/dte dte/dpsit=-temax da/dte dtenorm/dpsit
+
+   !Redl et al (2021): ibootstrap_model=4:! equivalent to 2 but a simplified version
+    !temp3 = A = -2pi Gbar / (iota - helicity_N) L31        p d lnn  /d psit            =  (ne_s Te_s + ni_s Ti_s)/ne (d lnne / d psit)) = (ne_s Te_s + ni_s Ti_s)/ne (del ne.del Te)/(|del Te|^2 + chi^2) dTe/dpsit
+    !temp3 = A = -2pi Gbar / (iota - helicity_N) L31        pe d lnne  /d psit   +  pi d lnni  /d psit         = 
+    !             -2pi Gbar / (iota - helicity_N) L31       [(pe)/ne (del ne.del Te)/(|del Te|^2+ chi^2) 
+    !                                                       +(pi)/ni (del ni.del Te)/(|del Te|^2+ chi^2)] dTe/dpsit
+    !        A =  -2pi Gbar / (iota - helicity_N) L31       [Te (del ne.del Te)/(|del Te|^2+ chi^2) 
+    !                                                       +Ti (del ni.del Te)/(|del Te|^2+ chi^2)] dTe/dpsit
+    !temp4 = B = -2pi Gbar / (iota - helicity_N) (L31+L32) Pe d lnTe /d psit            =  pe/Te  dTe/dpsit  = ne dTe/dpsit 
+    !temp5 = C = -2pi Gbar / (iota - helicity_N) (L31+L34alpha) (p-pe)d lnTi /d psit    =  (p-pe)/Ti (del Ti .del Te)/(|del Te|^2 + chi^2) dTe/dpsit
+    !                                                                                   =  ni (del Ti .del Te)/(|del Te|^2 + chi^2) dTe/dpsit
+    !tempD = <J.B> = [(A) +  (B) +  (C)]
+   
+   
+   !jbscommon   = -  1 / <B^2>   [ (A) +  (B) +  (C) ]
+    !temp1 =  <J.B>/<B^2>  * bootsrap_alpha   =  tempD 1 / <B^2> bootsrap_alpha
+    !temp2 =  <J.B>                           =  tempD           bootsrap_alpha 
+
+   
+   
+     
+    
+    use basic
+    use m3dc1_nint
+    use math
+  
+    implicit none
+    
+    vectype, dimension(MAX_PTS) :: tempAA, tempBB, tempCC, temp1, temp2
+    vectype, dimension(MAX_PTS) :: tempDD, temp_delmagTe
+    vectype, dimension(MAX_PTS) :: tempAA_ne,tempAA_ni
+    vectype, dimension(MAX_PTS) :: pso,chisq,const1, temp_val,x_norm
+    integer :: i,j
+    real(dp):: tempbeta,tempvar,temax3
+    real(dp) :: atten_width_edge, atten_width_core 
+    real(dp) :: atten_grad
+    real(dp), parameter :: pso_trans_start = 0.99_dp
+    real(dp), parameter :: pso_trans_width = 0.01_dp ! 1.0_dp - 0.99_dp
+    real(dp) :: x_trans, blend_factor, atten_width_local
+
+    temp1 = 0.
+    temp2 = 0.
+    tempAA =0.
+    tempBB =0.
+    tempCC =0.
+    tempDD =0.
+
+    tempAA_ne = 0.
+    tempAA_ni = 0.
+    temp_val =0.
+    pso= 0.
+    x_norm=0.
+    chisq=0.
+    const1=0.
+
+    temp_delmagTe =0.
+    tempbeta=0.
+    tempvar=0.
+    temax3=0.
+
+    atten_width_core=ibootstrap_regular*10.0
+    atten_width_edge=atten_width_core*100.0
+
+    if (ibootstrap_model.eq.1 .or. ibootstrap_model.eq.3) then 
+        print *, "Can't Use ibootstrap =3 , not setup yet"
+        stop
+    else if (ibootstrap_model.eq.2 .or. ibootstrap_model.eq.4) then 
+        call calculate_Coefficients_Redl()
+    end if
+
+    if(temax .le. ibootstrap_regular) then            
+      temax3 = MAX(temax_readin, ibootstrap_regular) ! Guards against 0.0 division
+    else          
+      temax3 = MAX(temax, ibootstrap_regular)
+    endif
+
+  do i=1,npoints
+    !(del a.del Te)=dadr dTedr + 1/r^2 dadphi dTedphi + dadz dTedz 
+    !|del Te|^2= dTedr ^2+ 1/r^2 dTedphi^2 +dTedz^2 
+    !(|del Te|^2)
+    temp_delmagTe(i) = tet79(i,OP_DR)*tet79(i,OP_DR)+ tet79(i,OP_DZ)*tet79(i,OP_DZ)
+#if defined(USE3D) || defined(USECOMPLEX)
+    if(itor.eq.1) temp_delmagTe(i) = temp_delmagTe(i) + tet79(i,OP_DP)*tet79(i,OP_DP)*ri2_79(i)
+#endif
+
+    pso(i) = 1.0_dp - MAX(real(tet79(i, OP_1)), ibootstrap_regular**2) / temax3
+
+    ! Smooth attenuation width based on pso(i)
+    if (real(pso(i)) > pso_trans_start) then
+        ! Normalize through the transition window to [0, 1]
+        x_trans = MIN(real(pso(i)) - pso_trans_start, pso_trans_width) / pso_trans_width
+        
+        ! Smooth cubic blend
+        blend_factor = 3.0 * x_trans**2 - 2.0 * x_trans**3
+
+        atten_width_local = atten_width_core + (atten_width_edge - atten_width_core) * blend_factor
+    else
+        atten_width_local = atten_width_core
+    endif
+
+    
+    atten_grad = (temp_delmagTe(i)**2) / (temp_delmagTe(i)**2 + atten_width_local**2)
+    temp_delmagTe(i)=(temp_delmagTe(i))+ ibootstrap_regular
+      
+    
+    tempBB(i) = net79(i, OP_1)
+
+    tempCC(i)=tit79(i,OP_DR)*tet79(i,OP_DR)+ tit79(i,OP_DZ)*tet79(i,OP_DZ)
+#if defined(USE3D) || defined(USECOMPLEX)
+    if(itor.eq.1) tempCC(i) = tempCC(i) + tit79(i,OP_DP)*tet79(i,OP_DP)*ri2_79(i)
+#endif 
+
+    tempCC(i) = tempCC(i) / temp_delmagTe(i) * atten_grad
+    !tempCC(i) = smooth_ceiling(real(tempCC(i)), 100.0_dp, 110.0_dp)
+
+    tempCC(i) = nt79(i,OP_1)* tempCC(i) 
+      
+      
+
+    if (ibootstrap_model.eq.2 .or. ibootstrap_model.eq.4)then !Redl et al (2021) 
+
+        tempAA_ne(i)=net79(i,OP_DR)*tet79(i,OP_DR)+ net79(i,OP_DZ)*tet79(i,OP_DZ)
+        tempAA_ni(i)=nt79(i,OP_DR)*tet79(i,OP_DR)+ nt79(i,OP_DZ)*tet79(i,OP_DZ)
+#if defined(USE3D) || defined(USECOMPLEX)
+        if(itor.eq.1) then
+          tempAA_ne(i) = tempAA_ne(i) + net79(i,OP_DP)*tet79(i,OP_DP)*ri2_79(i)
+          tempAA_ni(i) = tempAA_ni(i)+ nt79(i,OP_DP)*tet79(i,OP_DP)*ri2_79(i)
+        endif
+#endif
+        
+        !tempAA_ne(i) = tempAA_ne(i) / temp_delmagTe(i)
+        !tempAA_ni(i) = tempAA_ni(i) / temp_delmagTe(i) 
+
+        !tempAA_ni(i) = smooth_ceiling(real(tempAA_ni(i)), 100.0_dp, 110.0_dp)
+        !tempAA_ne(i) = smooth_ceiling(real(tempAA_ne(i)), 100.0_dp, 110.0_dp)
+        
+        tempAA_ne(i) = tet79(i,OP_1) * tempAA_ne(i)
+        tempAA_ni(i) = tit79(i,OP_1) * tempAA_ni(i) 
+
+        tempAA(i)=(tempAA_ni(i)+tempAA_ne(i))/temp_delmagTe(i) * atten_grad
+
+        
+          
+        !         A = -2pi Gbar / (iota - helicity_N) L31       pe d lnne  /d psit   +  pi d lnni  /d psit         = 
+        !             -2pi Gbar / (iota - helicity_N) L31       [Te (del ne.del Te)/(|del Te|^2+ chi^2) 
+        !                                                       +Ti (del ni.del Te)/(|del Te|^2+ chi^2)] dTe/dpsit
+        tempAA(i) = jbsfluxavg_G79(i,OP_1)*jbsl3179(i,OP_1)*(-temax3)&
+                    *jbs_dtedpsit79(i,OP_1)*(tempAA(i))
+
+        !         B = -2pi Gbar / (iota - helicity_N) (L31 + L32) pe_s (d lnTe / d psit)
+        !           = -2pi Gbar / (iota - helicity_N) (L31 + L32) pe/Te  dTe/dpsit 
+        !                                                           ne    dTe/dpsit 
+
+        tempBB(i) = jbsfluxavg_G79(i,OP_1)*(jbsl3179(i,OP_1)+jbsl3279(i,OP_1))&
+                *(-temax3)*jbs_dtedpsit79(i,OP_1)*(tempBB(i))
+          
+        !        C = -2pi Gbar / (iota - helicity_N) (L31 + L34 * alpha) pi_s (d lnTi / d psit)
+        !          = -2pi Gbar / (iota - helicity_N) (L31 + L34 * alpha) (p-pe)/Ti (del Ti .del Te)/(|del Te|^2 + chi^2) dTe/dpsit
+        !                                                                   ni     (del Ti .del Te)/(|del Te|^2 + chi^2) dTe/dpsit
+
+        tempCC(i) = jbsfluxavg_G79(i,OP_1)*(jbsl3179(i,OP_1)+jbsl3479(i,OP_1)*&
+                jbsalpha79(i,OP_1))*(-temax3)*jbs_dtedpsit79(i,OP_1)*(tempCC(i))
+
+        
+        if (real(pso(i)) > 0.9995) then
+          x_norm(i) = (MIN(real(pso(i)), 1.0_dp) - 0.9995_dp) / 0.0005_dp
+          temp_val(i) = 1.0_dp - (3.0_dp * x_norm(i)**2 - 2.0_dp * x_norm(i)**3)
+          
+          tempAA(i) = tempAA(i) * temp_val(i)
+          tempBB(i) = tempBB(i) * temp_val(i)
+          tempCC(i) = tempCC(i) * temp_val(i)
+        endif
+
+        !   jdotB = dnds_term + dTeds_term + dTids_term
+        tempDD(i) = (tempAA(i)) + (tempBB(i)) + (tempCC(i))
+      
+        
+    end if
+    
+      
+
+    if(ibootstrap_model.eq.5)then 
+      temp1(i)=1.0
+      temp2(i)=1.0
+    else !if (ibootstrap_model = 1,2,3,4)
+      temp1(i)=-tempDD(i)*jbsfluxavg_iBsq_B79(i,OP_1)*bootstrap_alpha
+      temp2(i)=-tempDD(i)*bootstrap_alpha
+    endif
+  enddo
+    
+  contains
+
+    pure elemental real(dp) function smooth_ceiling(val, v_start, v_max)
+      real(dp), intent(in) :: val, v_start, v_max
+      real(dp) :: x, abs_v, width
+      abs_v = abs(val)
+      width = v_max - v_start
+      if (abs_v <= v_start) then
+          smooth_ceiling = val 
+      else if (abs_v >= v_max) then
+          smooth_ceiling = sign(v_max, val)
+      else
+          x = (abs_v - v_start) / width
+          ! Quadratic bridge: matches slope 1 at v_start and slope 0 at v_max
+          smooth_ceiling = sign(v_start + width * (x - 0.5_dp*x**2), val)
+      end if
+    end function smooth_ceiling
+    
+    
+  end subroutine calculate_CommonTerm_Lambda_fordtenormdpsit
 
 end module bootstrap
 

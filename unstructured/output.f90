@@ -6,6 +6,7 @@ module m3dc1_output
   integer :: iwrite_transport_coeffs
   integer :: iwrite_aux_vars
   integer :: iwrite_adjacency
+  integer :: iwrite_quad_points
 
 contains
 
@@ -15,6 +16,10 @@ contains
     implicit none
 
     integer :: ier
+    
+    allocate(gamma_buffer(nt_gamma_gr))
+    gamma_buffer = 0.0
+    gamma_converged_flag = 0
     
    call hdf5_initialize(irestart.ne.0, ier)
 
@@ -41,6 +46,10 @@ contains
 
     call hdf5_finalize(ier)
     if(ier.ne.0) print *, 'Error finalizing HDF5:',ier
+    
+   if (allocated(gamma_buffer)) then
+      deallocate(gamma_buffer)
+   end if
   end subroutine finalize_output
 
   ! ======================================================================
@@ -76,13 +85,14 @@ contains
     use diagnostics
     use auxiliary_fields
     use particles
+    use signal_handler
 
     implicit none
 
     include 'mpif.h'
 
     integer :: ier
-    real :: tstart, tend, diff
+    real :: tstart, tend, diff, gamma_std, gamma_mean
 
     if(myrank.eq.0 .and. itimer.eq.1) call second(tstart)
     call hdf5_write_scalars(ier)
@@ -101,8 +111,31 @@ contains
 1003  format("OUTPUT: hdf5_write_scalars   ", I5, 1p2e16.8)
     endif
 
-    ! only write field data evey ntimepr timesteps
-    if(mod(ntime-ntime0,ntimepr).eq.0) then
+    
+    !if(myrank.eq.0) then
+       if((ekin+ekino)*dtold.eq.0. .or. ekin.eq.0..or. ntime.eq.0) then
+          gamma_gr = 0.
+       else
+          gamma_gr = (ekin - ekino)/((ekin+ekino)*dtold)
+       endif
+      
+      ! In linear simulations check if growth rate is converged and set flag to terminate simulation
+      if(linear.eq.1 .and. gamma_gr_stop.eq.1) then
+         gamma_idx = mod(gamma_idx, nt_gamma_gr) + 1
+         gamma_buffer(gamma_idx) = gamma_gr
+         gamma_mean = sum(gamma_buffer) / real(size(gamma_buffer))
+         gamma_std  = sqrt( sum((gamma_buffer - gamma_mean)**2) / real(size(gamma_buffer)) )
+         
+         if ( (ntime-ntime0).ge.nt_gamma_gr ) then
+            if (abs(gamma_std/gamma_mean) .lt. gamma_gr_stop_std) then
+               gamma_converged_flag = 1
+            endif
+         endif
+      endif
+    !endif
+    
+    ! only write field data every ntimepr timesteps, after termination signal was sent by Slurm, or when growth rate is converged (linear only)
+    if((mod(ntime-ntime0,ntimepr).eq.0) .or. timeout_flag.eq.1 .or. gamma_converged_flag.eq.1) then
        if(iwrite_aux_vars.eq.1) then
           if(myrank.eq.0 .and. iprint.ge.2) print *, "  calculating aux fields"
           call calculate_auxiliary_fields(eqsubtract)
@@ -152,14 +185,33 @@ contains
 
     ! Write C1ke data
     if(myrank.eq.0) then
-       if((ekin+ekino)*dtold.eq.0. .or. ekin.eq.0..or. ntime.eq.0) then
-          gamma_gr = 0.
-       else
-          gamma_gr = (ekin - ekino)/((ekin+ekino)*dtold)
-       endif
        write(ke_file, '(I8, 1p3e12.4,2x,1p3e12.4,2x,1p3e12.4,2x,1pe13.5)') &
             ntime, time, ekin, gamma_gr, &
             ekinp,ekint,ekin3, emagp, emagt, emag3, etot
+    endif
+
+
+    ! If growth rate is converged in linear simulation, stop code execution after output was written
+    if (gamma_converged_flag.eq.1) then
+      if (myrank.eq.0) then
+        print *, ' ============================================='
+        print *, ' Growth rate gamma has converged.'
+        print *, ' Simulation stopping at time step: ', ntime
+        print *, ' Time slice written before termination.'
+        print *, ' ============================================='
+      endif
+      call safestop(20)
+    endif
+    ! If Slurm is terminating the job, stop code execution after output was written
+    if (timeout_flag.eq.1) then
+      if (myrank.eq.0) then
+        print *, ' ============================================='
+        print *, ' SLURM SIGNAL RECEIVED (SIGUSR1)'
+        print *, ' Time limit approaching or job preempted.'
+        print *, ' Time slice written before termination.'
+        print *, ' ============================================='
+      endif
+      call safestop(401)
     endif
   end subroutine output
 
@@ -254,7 +306,6 @@ subroutine hdf5_write_parameters(error)
   call write_real_attr(root_id, "frequency"  , frequency,  error)
   call write_int_attr (root_id, "ibootstrap_model", ibootstrap_model, error)
   call write_real_attr(root_id, "bootstrap_alpha", bootstrap_alpha, error)
-  call write_int_attr (root_id, "ibootstrap_map_te", ibootstrap_map_te, error)
   call write_real_attr(root_id, "eta_te_offset", eta_te_offset, error)
   call write_int_attr (root_id, "imag_probes", imag_probes, error)
   call write_int_attr (root_id, "iflux_loops", iflux_loops, error)
@@ -743,6 +794,8 @@ subroutine output_mesh(time_group_id, nelms, error)
   use mesh_mod
   use basic
   use boundary_conditions
+  use nintegrate
+  use m3dc1_nint
 
   implicit none
 
@@ -761,6 +814,7 @@ subroutine output_mesh(time_group_id, nelms, error)
 #endif
   real, dimension(vals_per_elm,nelms) :: elm_data
   integer, dimension(nodes_per_element) :: nodeids
+  real, dimension(int_pts_main*int_pts_tor,nelms) :: pts_r, pts_phi, pts_z
   real :: alx, alz
 
   integer :: is_edge(3)
@@ -819,6 +873,16 @@ subroutine output_mesh(time_group_id, nelms, error)
      elm_data( 9,i) = d%d
      elm_data(10,i) = d%Phi
 #endif
+
+     if(iwrite_quad_points.eq.1) then
+        call define_element_quadrature(i,int_pts_main,int_pts_tor)
+        if(npoints.ne.int_pts_main*int_pts_tor) then
+           print *, 'WARNING: INCONSISTENT NPOINTS IN QUADRATURE'
+        end if
+        pts_r(1:npoints,i) = x_79(1:npoints)
+        pts_z(1:npoints,i) = z_79(1:npoints)
+        pts_phi(1:npoints,i) = phi_79(1:npoints)
+     end if
   end do
   call output_field(mesh_group_id, "elements", elm_data, vals_per_elm, &
        nelms, error)
@@ -832,6 +896,19 @@ subroutine output_mesh(time_group_id, nelms, error)
      call output_field_int(mesh_group_id, "adjacency", adjacent, max_adj, &
           nelms, error)
      call clear_adjacency_matrix()
+  end if
+
+  if(iwrite_quad_points.eq.1) then
+     if(iprint.ge.1 .and. myrank.eq.0) then
+        print *, 'Writing quadrature points'
+     end if
+
+     call output_field(mesh_group_id, "quad_r", pts_r, &
+          int_pts_main*int_pts_tor, nelms, error)
+     call output_field(mesh_group_id, "quad_phi", pts_phi, &
+          int_pts_main*int_pts_tor, nelms, error)
+     call output_field(mesh_group_id, "quad_z", pts_z, &
+          int_pts_main*int_pts_tor, nelms, error)
   end if
 
 #ifdef USE3D
@@ -1109,8 +1186,8 @@ subroutine output_fields(time_group_id, equilibrium, error)
   end if
 
 #ifdef USEPARTICLES
+  call write_field(group_id, "rhof", rho_field, nelms, error)
   if (kinetic.eq.1) then
-     call write_field(group_id, "rhof", rho_field, nelms, error)
      call write_field(group_id, "nf",   nf_field, nelms, error)
      call write_field(group_id, "tf",   tf_field, nelms, error)
      call write_field(group_id, "pf",   pf_field, nelms, error)
@@ -1145,7 +1222,7 @@ subroutine output_fields(time_group_id, equilibrium, error)
         !Parallel component of hot ion pressure tensor
         call write_field(group_id, "v_i_par", v_i_par, nelms, error)
 
-        call write_field(group_id, "psmooth", psmooth_field, nelms, error)
+        call write_field(group_id, "densmooth", densmooth_field, nelms, error)
         call write_field(group_id, "vparsmooth", vparsmooth_field, nelms, error)
   endif
 #endif
@@ -1201,14 +1278,21 @@ subroutine output_fields(time_group_id, equilibrium, error)
      if(ibootstrap.gt.0) then
         call write_field(group_id, "visc_e", visc_e_field, nelms, error,.true.)
           !Bootstrap Coeff Fields
-        call write_field(group_id, "Jbs_L31", Jbs_L31_field, nelms, error,.true.)
-        call write_field(group_id, "Jbs_L32", Jbs_L32_field, nelms, error,.true.)
-        call write_field(group_id, "Jbs_L34", Jbs_L34_field, nelms, error,.true.)
-        call write_field(group_id, "Jbs_alpha", Jbs_alpha_field, nelms, error,.true.)
+        if(ibootstrap.eq.1 .or. ibootstrap.eq.2 .or. ibootstrap.eq.3) then
+         call write_field(group_id, "Jbs_L31", Jbs_L31_field, nelms, error,.true.)
+         call write_field(group_id, "Jbs_L32", Jbs_L32_field, nelms, error,.true.)
+         call write_field(group_id, "Jbs_L34", Jbs_L34_field, nelms, error,.true.)
+         call write_field(group_id, "Jbs_alpha", Jbs_alpha_field, nelms, error,.true.)
+        endif
         call write_field(group_id, "Jbs_fluxavg_iBsq", Jbs_fluxavg_iBsq_field, nelms, error,.true.)
         call write_field(group_id, "Jbs_fluxavg_G", Jbs_fluxavg_G_field, nelms, error,.true.)
-        if(ibootstrap.eq.2) then
+        if(ibootstrap.eq.2 .or. ibootstrap.eq.3) then
           call write_field(group_id, "Jbs_dtedpsit", Jbs_dtedpsit_field, nelms, error,.true.)
+        endif
+        if(ibootstrap.eq.3) then
+          call write_field(group_id, "Jbs_ftrap", Jbs_ftrap_field, nelms, error,.true.)
+          call write_field(group_id, "Jbs_qR", Jbs_qR_field, nelms, error,.true.)
+          call write_field(group_id, "Jbs_invAspectRatio", Jbs_invAspectRatio_field, nelms, error,.true.)
         endif
      endif
   end if !(iwrite_transport_coeffs.eq.1)
@@ -1493,14 +1577,21 @@ subroutine mark_fields(equilibrium)
         ! visc_e_field
         call mark_field_for_solutiontransfer(visc_e_field)
         !Bootstrap Coeff Fields
-        call mark_field_for_solutiontransfer(Jbs_L31_field)
-        call mark_field_for_solutiontransfer(Jbs_L32_field)
-        call mark_field_for_solutiontransfer(Jbs_L34_field)
-        call mark_field_for_solutiontransfer(Jbs_alpha_field)
+        if(ibootstrap.eq.1 .or. ibootstrap.eq.2 .or. ibootstrap.eq.3) then
+         call mark_field_for_solutiontransfer(Jbs_L31_field)
+         call mark_field_for_solutiontransfer(Jbs_L32_field)
+         call mark_field_for_solutiontransfer(Jbs_L34_field)
+         call mark_field_for_solutiontransfer(Jbs_alpha_field)
+        endif
         call mark_field_for_solutiontransfer(Jbs_fluxavg_iBsq_field)
         call mark_field_for_solutiontransfer(Jbs_fluxavg_G_field)
-        if(ibootstrap.eq.2) then
+        if(ibootstrap.eq.2 .or. ibootstrap.eq.3) then
          call mark_field_for_solutiontransfer(Jbs_dtedpsit_field)
+        endif
+        if(ibootstrap.eq.3) then
+         call mark_field_for_solutiontransfer(Jbs_ftrap_field)
+         call mark_field_for_solutiontransfer(Jbs_qR_field)
+         call mark_field_for_solutiontransfer(Jbs_invAspectRatio_field)
         endif
      endif
   end if !(iwrite_transport_coeffs.eq.1)

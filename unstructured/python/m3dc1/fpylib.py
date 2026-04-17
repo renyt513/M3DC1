@@ -10,9 +10,22 @@ import numpy as np
 import math
 import glob
 import os
+from pathlib import Path
 from termcolor import colored
 import matplotlib.pyplot as plt
 from m3dc1.unit_conv  import unit_conv
+from m3dc1.read_h5 import readParameter
+
+#-------------------------------------------
+# List of clusters identified by FIO_ARCH
+#-------------------------------------------
+clusters = {'sunfire' : 'portal.pppl.gov',
+            'flux' : 'flux.pppl.gov',
+            'stellar' : 'stellar.princeton.edu',
+            'perlmutter' : 'perlmutter-p1.nersc.gov'
+            }
+
+
 
 #-------------------------------------------
 # Plotting and formatting routines
@@ -123,6 +136,16 @@ def setup_sims(sim,filename,time,linear,diff):
 
     return sim, time
 
+
+def get_ntimesteps(timeslice):
+    if timeslice>0:
+        fname = 'time_'+str(timeslice).zfill(3)+'.h5'
+    elif timeslice==-1:
+        fname = 'equilibrium.h5'
+    timestep = readParameter('ntimestep',fname=fname)
+    return timestep
+
+
 # identify index for given coordinate
 def get_field_idx(coord):
 
@@ -133,8 +156,6 @@ def get_field_idx(coord):
         return None
     else:
         raise RuntimeError('Please enter valid coordinate. Accepted: \'R\', \'phi\', \'Z\', \'poloidal\', \'radial\', \'scalar\', \'vector\'')
-
-
 
 
 
@@ -348,7 +369,10 @@ def get_fieldlabel(units,field,fac=1,shortlbl=False):
               'A':'vector potential', 'gradA':'grad vector potential',
               'E':'electric field', 'alpha':r'ballooning parameter $\alpha$',
               'eta':'resistivity', 'eta_spitzer':'resistivity',
-              'shear':'magnetic shear', 'psi':'poloidal flux', 'default':field}
+              'shear':'magnetic shear', 'psi':'poloidal flux', 
+              'ne/ng':'$n_e / n_G$',
+              'S':'Lundquist number $S$', 'lundquist':'Lundquist number $S$',
+              'default':field}
     
     short_labels = {'j':'j', 'ni':'$n_{i}$','ne':'$n_{e}$',
               'v':'v', 'B':'B', 'p':'p',
@@ -356,8 +380,9 @@ def get_fieldlabel(units,field,fac=1,shortlbl=False):
               'ti':'$T_{i}$', 'te':'$T_{e}$',
               'A':'A', 'gradA':'$grad A$ ',
               'E':'E', 'alpha':r'$\alpha$',
-              'eta':r'$\eta$', 'shear':'s',
-              'psi':r'$\psi$','default':field}
+              'eta':r'$\eta$', 'eta_spitzer':r'$\eta_{Spitzer}$',
+              'shear':'s', 'psi':r'$\psi$', 'ne/ng':'$n_e / n_G$',
+              'default':field}
 
     if units.lower()=='m3dc1':
         units = {'eta_spitzer':'a. u.', 'default':'M3DC1 units'}
@@ -366,7 +391,9 @@ def get_fieldlabel(units,field,fac=1,shortlbl=False):
                  'v':'m/s', 'B':'T', 'p':'Pa', 'pi':'Pa', 'pe':'Pa',
                  'ti':'eV', 'te':'eV', 'A':r'T$\cdot$m',
                  'gradA':r'Tesla$\cdot$m / (m or rad)', 'E':'V/m',
-                 'eta':r'$\Omega$m', 'psi':'Wb', 'default':'MKS units'}
+                 'eta_spitzer':r'$\Omega$m', 'eta':r'$\Omega$m',
+                 'psi':'Wb', 'ne/ng':'', 'S':'$S$', 'lundquist':'$S$',
+                 'default':'MKS units'}
 
     if field in labels:
         label = short_labels[field] if shortlbl else labels[field]
@@ -467,7 +494,7 @@ def get_tracelabel(units,trace,label=None,unitlabel=None,fac=1):
               'radiation':('Radiated power','W'),
               'reconnected_flux':('Reconnected flux',r'T$\cdot$m$^2$'),
               'reck_rad':('Recombination radiated power (kinetic)','W'),
-              'recp_rad':('Recombination radiated power (thermal','W'),
+              'recp_rad':('Recombination radiated power (thermal)','W'),
               'runaways':('Number of runaway electrons','particles'),
               'temax':('Extremum of temperature near-axis','eV'),
               'time':('Time','s'),
@@ -503,8 +530,8 @@ def get_tracelabel(units,trace,label=None,unitlabel=None,fac=1):
               'pellet_vy':(r'$Y$ velocity of pellet','m/s'),
               'pellet_z':(r'$Z$ location of pellet','m'),
               'r_p':('Pellet radius','m'),
-              'kprad_n0':('Neutral impurities',''),
-              'kprad_n':('Total impurities',''),
+              'kprad_n0':('Neutral impurities','particles'),
+              'kprad_n':('Total impurities','particles'),
               }
 
     if trace in labels:
@@ -545,10 +572,12 @@ def get_conv_field(units,field,field1_ave,filename='C1.h5',sim=None):
     if field in fields:
         expns.update(fields[field])
 
+    if not isinstance(sim,fpy.sim_data):
+        sim = fpy.sim_data(filename=filename)
     if units.lower()=='m3dc1':
-        if not isinstance(sim,fpy.sim_data):
-            sim = fpy.sim_data(filename=filename)
         field1_ave = unit_conv(field1_ave,arr_dim='mks',sim=sim,**expns)
+    if units.lower()=='mks':
+        field1_ave = unit_conv(field1_ave,arr_dim='m3dc1',sim=sim,**expns)
     return field1_ave
 
 
@@ -633,7 +662,7 @@ def get_conv_trace(units,trace,trace_arr,filename='C1.h5',sim=None,itor=1,custom
               'pellet_velphi':{'velocity':1}, 'pellet_velr':{'velocity':1},
               'pellet_velz':{'velocity':1}, 'pellet_vx':{'velocity':1},
               'pellet_vy':{'velocity':1}, 'pellet_z':{'length':1},
-              'r_p':{'length':1},
+              'r_p':{'length':1}, 'kprad_n':{'particles':1}, 'kprad_n0':{'particles':1},
               }
 
     if custom is not None:
@@ -881,6 +910,33 @@ def get_run_dirs(dirname):
     return subfolders
 
 
+def str_in_file(filename, search_str):
+    with open(filename, "rb") as f:
+        f.seek(0, os.SEEK_END)# Move to end of file
+        pos = f.tell()
+        buffer = bytearray()
+        while pos > 0:
+            pos -= 1
+            f.seek(pos)
+            char = f.read(1)
+            if char == b'\n':
+                line = buffer[::-1].decode()
+                buffer.clear()
+                if "linking time_" in line:
+                    break
+                if search_str in line:
+                    return True
+            else:
+                buffer.append(char[0])
+        # Check last line if needed ()
+        if buffer:
+            line = buffer[::-1].decode()
+            if search_str in line:
+                return True
+    return False
+
+
+
 #-------------------------------------------
 # Read data from Slurm log files
 #-------------------------------------------
@@ -902,22 +958,21 @@ def get_input_parameter_file(directory=None,use_C1input=True):
         directory = os.getcwd()
     slurmfiles = glob.glob(directory+"/slurm*.out")
 
-    #if len(slurmfiles) < 1:
-    #    slurmfiles = glob.glob(cwd+'/n'+str(nmin).zfill(2)+"/slurm*.out")
-    #    if len(slurmfiles) < 1:
-    #        printerr('ERROR: No Slurm output file found!')
-    #        os.chdir(cwd)
-    #        return
-
     # If no slurm file can be found, read from C1input instead
-    if len(slurmfiles) < 1 and use_C1input:
-        printwarn('WARNING: No Slurm output file found. Looking for C1input file instead.')
-        C1infile = glob.glob(directory+"/C1input")
-        if len(C1infile) < 1:
-            printerr('ERROR: Cannot find Slurm output or C1input file.')
-            return
-        else:
-            slurmfiles = C1infile
+    if len(slurmfiles) < 1:
+        #If no Slurm file was found in current directory, check parent directory (for array jobs slurm logs are in parent dir)
+        dirname = Path.cwd().name
+        if len(dirname) == 3 and dirname[0] == 'n' and dirname[1:].isdigit():
+            nn = str(int(dirname[1:]))
+            slurmfiles = glob.glob(f'../slurm*_{nn}.out')
+        if len(slurmfiles) < 1 and use_C1input:
+            printwarn('WARNING: No Slurm output file found. Looking for C1input file instead.')
+            C1infile = glob.glob(directory+"/C1input")
+            if len(C1infile) < 1:
+                printerr('ERROR: Cannot find Slurm output or C1input file.')
+                return
+            else:
+                slurmfiles = C1infile
 
     if len(slurmfiles) > 1:
         printwarn('WARNING: More than 1 Slurm log file found. Using the latest one.')

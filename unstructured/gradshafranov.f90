@@ -1264,7 +1264,9 @@ endif
   error2 = 0.
   !-------------------------------------------------------------------
   ! start of iteration loop on plasma current
-  mainloop: do itnum=1, iabs(igs)
+  gamma4=1.0
+  !mainloop: do itnum=1, iabs(igs)
+  mainloop: do itnum=1, igs
 
      if(myrank.eq.0) print *, "GS iteration = ", itnum, error2
      
@@ -1593,7 +1595,7 @@ endif
         do i=1, npoints
            call calc_fdensity(ps079(i,:),tf,x_79(i),z_79(i),izone)
            call calc_ftemp(ps079(i,:),tf2,x_79(i),z_79(i),izone)
-           if (fast_ion_dist==1) then
+           if ((fast_ion_dist==1).or.(fast_ion_dist==0)) then
               temp79a(i) =tf*tf2* 1.6022e-12 / (b0_norm**2/(4.*pi*n0_norm))!rsae
            else
               crit_v=sqrt(2*tf2*1.6e-19/fast_ion_mass/m_p)
@@ -1704,13 +1706,13 @@ endif
      pfi_field = b1vecini_vec
   end if 
 
-  if ((kinetic.eq.1).and.(kinetic_fast_ion.eq.1)) then
+  if ((kinetic.eq.1).and.(particle_couple.ge.0).and.(kinetic_fast_ion.eq.1)) then
      call mult(pf_field, -1.)
      call add(p_field(0), pf_field)
      call mult(pf_field, -1.)
   endif
 
-  if ((kinetic.eq.1).and.(kinetic_thermal_ion.eq.1)) then
+  if ((kinetic.eq.1).and.(particle_couple.ge.0).and.(kinetic_thermal_ion.eq.1)) then
      call mult(pfi_field, -1.)
      call add(p_field(0), pfi_field)
      call mult(pfi_field, -1.)
@@ -2180,7 +2182,7 @@ subroutine fundef
         call get_node_data(psi_coil_field, ii, temp2)
         temp = temp + temp2
      end if
-     pso =  (temp(1) - psimin)*dpsii
+     pso =  (temp(1) - psimin)*dpsii*psifrac
 
      call m3dc1_ent_getgeomclass(0,ii-1,izonedim,izone) 
      call magnetic_region(temp(1),temp(2),temp(3),x,z,mr)
@@ -2429,7 +2431,7 @@ subroutine fundef2(error)
      
      do i=1, npoints
         
-        pso = (ps079(i,OP_1)-psimin)*dpsii
+        pso = (ps079(i,OP_1)-psimin)*dpsii*psifrac
         psm = pso
         f = 1.
         ! if we are in private flux region, make sure Psi > 1
@@ -2966,7 +2968,7 @@ pure subroutine calc_toroidal_field(ps0,tf,x,z,izone)
   if(mr.ne.REGION_PLASMA .or. izone.ne.ZONE_PLASMA) then
      tf = bzero*rzero
   else
-     psii = (real(ps0(1)) - psimin)/(psibound - psimin)
+     psii = (real(ps0(1)) - psimin)/(psibound - psimin)*psifrac
 
      if(.not.constraint) then
         g2 = psii - 10.*psii**3 + 20.*psii**4       &
@@ -3023,7 +3025,7 @@ subroutine calc_pressure(ps0, pres, x, z, izone)
      return
   end if
 
-  psii = (real(ps0(1)) - psimin)/(psibound - psimin)
+  psii = (real(ps0(1)) - psimin)/(psibound - psimin)*psifrac
 
   call magnetic_region(ps0(1),ps0(2),ps0(3),x,z,mr,psinb)
 
@@ -3083,7 +3085,7 @@ subroutine calc_density(ps0, dens, x, z, izone)
 
   call magnetic_region(ps0(1),ps0(2),ps0(3),x,z,mr,psinb)
 
-  psii = (real(ps0(1)) - psimin)/(psibound - psimin)
+  psii = (real(ps0(1)) - psimin)/(psibound - psimin)*psifrac
 
   ! if we are in private flux region, make sure Psi > 1
   if(mr.eq.REGION_PF) psii = psin_in_pf_region(psii,psinb)
@@ -3128,7 +3130,7 @@ subroutine calc_rho(ps0, dens, x, z, izone)
 
   call magnetic_region(ps0(1),ps0(2),ps0(3),x,z,mr,psinb)
 
-  psii = (real(ps0(1)) - psimin)/(psibound - psimin)
+  psii = (real(ps0(1)) - psimin)/(psibound - psimin)*psifrac
 
   ! if we are in private flux region, make sure Psi > 1
   if(mr.eq.REGION_PF) psii = psin_in_pf_region(psii,psinb)
@@ -3164,7 +3166,7 @@ subroutine calc_fdensity(ps0, dens, x, z, izone)
 
   call magnetic_region(ps0(1),ps0(2),ps0(3),x,z,mr,psinb)
 
-  psii = (real(ps0(1)) - psimin)/(psibound - psimin)
+  psii = (real(ps0(1)) - psimin)/(psibound - psimin)*psifrac
 
   ! if we are in private flux region, make sure Psi > 1
   if(mr.eq.REGION_PF) psii = psin_in_pf_region(psii,psinb)
@@ -3196,7 +3198,7 @@ subroutine calc_ftemp(ps0, tf, x, z, izone)
      if(izone.ne.ZONE_PLASMA) then 
         tf0 = tf_spline%y(tf_spline%n)
      else
-        psii = (real(ps0(1)) - psimin)/(psibound - psimin)
+        psii = (real(ps0(1)) - psimin)/(psibound - psimin)*psifrac
         call magnetic_region(ps0(1),ps0(2),ps0(3),x,z,mr,psinb)
         if(mr.eq.REGION_PF) psii = psin_in_pf_region(psii,psinb)
         call evaluate_spline(tf_spline,psii,tf0)
@@ -3232,7 +3234,7 @@ subroutine calc_fidensity(ps0, dens, x, z, izone)
 
   call magnetic_region(ps0(1),ps0(2),ps0(3),x,z,mr,psinb)
 
-  psii = (real(ps0(1)) - psimin)/(psibound - psimin)
+  psii = (real(ps0(1)) - psimin)/(psibound - psimin)*psifrac
 
   ! if we are in private flux region, make sure Psi > 1
   if(mr.eq.REGION_PF) psii = psin_in_pf_region(psii,psinb)
@@ -3264,7 +3266,7 @@ subroutine calc_fitemp(ps0, tf, x, z, izone)
      if(izone.ne.ZONE_PLASMA) then 
         tf0 = tfi_spline%y(tf_spline%n)
      else
-        psii = (real(ps0(1)) - psimin)/(psibound - psimin)
+        psii = (real(ps0(1)) - psimin)/(psibound - psimin)*psifrac
         call magnetic_region(ps0(1),ps0(2),ps0(3),x,z,mr,psinb)
         if(mr.eq.REGION_PF) psii = psin_in_pf_region(psii,psinb)
         call evaluate_spline(tfi_spline,psii,tf0)
@@ -3302,7 +3304,7 @@ subroutine calc_electron_pressure(ps0, pe, x, z, izone)
      if(izone.ne.ZONE_PLASMA) then 
         te0 = te_spline%y(te_spline%n)
      else
-        psii = (real(ps0(1)) - psimin)/(psibound - psimin)
+        psii = (real(ps0(1)) - psimin)/(psibound - psimin)*psifrac
         call magnetic_region(ps0(1),ps0(2),ps0(3),x,z,mr,psinb)
         if(mr.eq.REGION_PF) psii = psin_in_pf_region(psii,psinb)
         call evaluate_spline(te_spline,psii,te0)
@@ -3353,7 +3355,7 @@ subroutine calc_rotation(ps0,omega, x, z, izone)
      return
   end if    
 
-  psii = (real(ps0(1)) - psimin)/(psibound - psimin)
+  psii = (real(ps0(1)) - psimin)/(psibound - psimin)*psifrac
   if(mr.eq.REGION_PF) psii = psin_in_pf_region(psii,psinb)
 
   call evaluate_spline(omega_spline,psii,w0)

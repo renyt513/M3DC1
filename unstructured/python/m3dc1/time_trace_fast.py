@@ -11,7 +11,6 @@ import os
 import glob
 from pathlib import Path
 import re
-import math
 import matplotlib.pyplot as plt
 from matplotlib import rc
 import matplotlib.gridspec as gridspec
@@ -31,7 +30,6 @@ import fpy
 import m3dc1.fpylib as fpyl
 from m3dc1.unit_conv import unit_conv
 from m3dc1.plot_field  import plot_field
-from m3dc1.read_h5 import readC1File
 from m3dc1.read_h5 import readParameter
 from m3dc1.gamma_file import Gamma_file
 from m3dc1.gamma_data import Gamma_data
@@ -40,332 +38,15 @@ from m3dc1.get_time_of_slice import get_time_of_slice
 
 from m3dc1.pedestal_finder      import get_ped_structure
 
+from m3dc1.get_timetrace import get_timetrace
+from m3dc1.get_ped_param import get_ped_param
+
 #from m3dc1.flux_coordinates import flux_coordinates
 from m3dc1.eigenfunction import eigenfunction
 from m3dc1.eigenfunction import mode_type
 
 rc('text', usetex=True)
 plt.rcParams.update({'figure.max_open_warning': 40})
-
-
-def get_timetrace(trace,sim=None,filename='C1.h5',units='m3dc1',ipellet=0,diff=False,
-                  growth=False,renorm=False,quiet=False,returnas='tuple',unitlabel=None,fac=1):
-    """
-    Read a time trace directly from an hdf5 file. This function does not use fusion-io.
-    
-    Arguments:
-
-    **trace**
-    Name of trace (scalar)
-
-    **sim**
-    fpy simulation object.
-
-    **filename**
-    Name or path to C1.h5 file to read
-
-    **units**
-    The units in which the time trace will be returned
-
-    **growth**
-    If True, return growth rate of trace. If false, return trace
-
-    **renorm**
-    Remove spikes due to renormalization in linear runs that happens when
-    the kinetic energy gets too large.
-
-    **quiet**
-    If True, do not print renormalization times to screen.
-
-    **returnas**
-    Determines how time trace is being returned.
-    'tuple': Returns a tuple of (time, values, label, unitlabel)
-    'time_trace': returns time trace as object inside a tuple
-                  (fpy.sim_data.time_trace(values,time=time), label, unitlabel)
-
-    **unitlabel**
-    Deprecated.
-
-    **fac**
-    Scale factor for time trace. Returned time trace values will be multiplied
-    by fac. If fac equals 1.0E-3, 1.0E-6 or 1.0E-9, a 'k', 'M' or 'G' will be
-    prepended to the unitlabel to reflect the correct order of magnitude.
-    """
-    if not isinstance(sim,fpy.sim_data):
-        sim = fpy.sim_data(filename=filename)
-    constants = sim.get_constants()
-    itor    = constants.itor
-    version = constants.version
-    gamma   = constants.gamma
-
-    # Direct transformation of one name to another
-    transform = {'toroidal current':'toroidal_current',
-                 'it':'toroidal_current',
-                 'plasma current':'toroidal_current_p',
-                 'ip':'toroidal_current_p',
-                 'wall current':'toroidal_current_w',
-                 'iw':'toroidal_current_w',
-                 'volume':'volume_p',
-                 'plasma volume':'volume_p',
-                 'volume_d':'volume',
-                 'domain volume':'volume',
-                 'toroidal flux': 'toroidal_flux_p',
-                 'time step': 'dt',
-                 'psibound':'psi_lcfs',
-                 'psilim':'psi_lcfs',
-                 'loop voltage':'loop_voltage',
-                 'vl':'loop_voltage',
-                 'poloidal magnetic energy':'E_MP',
-                 'Wm':'E_MP',
-                 'thermal energy':'E_P',
-                 'p':'E_P',
-                 'electron thermal energy':'E_PE',
-                 'pe':'E_PE',
-                 'particles':'particle_number',
-                 'n':'particle_number',
-                 'electrons':'electron_number',
-                 'ne':'electron_number',
-                 'angular momentum': 'angular_momentum',
-                 'vorticity': 'circulation',
-                 'parallel viscous heating': 'parallel_viscous_heating',
-                 'IZ': 'M_IZ',
-                 'ave_p': 'Ave_P',
-                 'total current': 'itot',
-                 'halo current': 'ih',
-                 'kinetic energy': 'ke',
-                 'magnetic energy': 'me',
-                 'prad': 'radiation',
-                 'pline': 'line_rad',
-                 'pbrem': 'brem_rad',
-                 'pion': 'ion_loss',
-                 'preck': 'reck_rad',
-                 'precp': 'recp_rad',
-                 'POhm': 'pohm',
-                 'pelr': 'pellet_rate',
-                 'pellet ablation rate': 'pellet_ablrate',
-                 'pelablr': 'pellet_ablrate',
-                 'pellet var': 'pellet_var',
-                 'pelvar': 'pellet_var',
-                 'pellet radius': 'r_p',
-                 'pelrad': 'r_p',
-                 'pellet R position': 'pellet_r',
-                 'pelrpos': 'pellet_r',
-                 'pellet_x': 'pellet_r',
-                 'pellet phi position': 'pellet_phi',
-                 'pelphipos': 'pellet_phi',
-                 'pellet Z position': 'pellet_z',
-                 'pelzpos': 'pellet_z',
-                 'poloidal beta': 'betap',
-                 'bp': 'betap',
-                 }
-
-    # Simple linear combinations
-    combos = {'itot':([('toroidal_current_w',1.),('toroidal_current',1.)],
-                      {'current':1}, 'Total toroidal current', 'A'),
-              'ih':([('toroidal_current',1.),('toroidal_current_p',-1.)],
-                    {'current':1}, 'Halo-region toroidal current', 'A'),
-              'ke':([('E_KP',1.),('E_KT',1.),('E_K3',1.)], {'energy':1}, 
-                    'Kinetic energy', 'J'),
-              'me':([('E_MP',1.),('E_MT',1.)], {'energy':1},
-                    'Magnetic energy', 'J'),
-              'energy':([('E_KP',1.),('E_KT',1.),('E_K3',1.),
-                         ('E_MP',1.),('E_MT',1.),('E_P',1.)], {'energy':1},
-                        'Total energy', 'J'),
-              'flux':([('psimin',2.*np.pi),('psi_lcfs',-2.*np.pi)],
-                      {'magnetic_field':1,'length':2}, 'Flux', r'T$\cdot$m$^2$'),
-              'radiation':([('radiation',-1.)], None, None, None),
-              'line_rad':([('line_rad',-1.)], None, None, None),
-              'brem_rad':([('brem_rad',-1.)], None, None, None),
-              'ion_loss':([('ion_loss',-1.)], None, None, None),
-              'reck_rad':([('reck_rad',-1.)], None, None, None),
-              'recp_rad':([('recp_rad',-1.)], None, None, None),
-              'rec_rad':([('reck_rad',-1.),('recp_rad',-1.)],
-                         {'energy':1,'time':-1}, 'Recombination radiated power', 'W'),
-              'pohm':([('E_MPD',-1),('E_MTD',-1)], {'energy':1,'time':-1},
-                      'Ohmic heating power', 'W'),
-              }
-
-    if trace in transform:
-        trace = transform[trace]
-
-    if trace == 'reconnected flux':
-        scalar = abs(sim.get_time_trace('reconnected_flux'))
-        custom = {'magnetic_field':1,'length':1+itor}
-        label = None
-        unitlabel = None
-
-    elif trace == 'r_p':
-        if (version < 26):
-            scalar = sim.get_time_trace('r_p2')
-        else:
-            scalar = sim.get_time_trace('r_p')
-        custom = None
-        label = None
-        unitlabel = None
-
-    elif trace == 'pellet_r':
-        if (version < 26):
-            scalar = sim.get_time_trace('pellet_x')
-        else:
-            scalar = sim.get_time_trace('pellet_r')
-        custom = None
-        label = None
-        unitlabel = None
-
-    elif trace == 'beta':
-        if (version < 26):
-            scalar = sim.get_time_trace('E_P')
-        else:
-            scalar = sim.get_time_trace('W_P')
-        E_MP = sim.get_time_trace('E_MP')
-        E_MT = sim.get_time_trace('E_MT')
-        scalar *= (gamma-1.)/(E_MP + E_MT)
-        custom = None
-        label = r'$\beta$'
-        unitlabel = None
-
-    elif trace == 'betap':
-        if (version < 26):
-            scalar = sim.get_time_trace('E_P')
-            it     = sim.get_time_trace('toroidal_current')
-            scalar *= 2.*(gamma-1.)/it**2
-        else:
-            scalar = sim.get_time_trace('W_P')
-            W_M    = sim.get_time_trace('W_M')
-            scalar *= (gamma-1.)/W_M
-        custom = None
-        label = r'Poloidal $\beta$'
-        unitlabel = None
-
-    elif trace in ['betan','betat']:
-        raise RuntimeError("'%s' not yet implemented; need shape information"%trace)
-
-    elif trace == 'electron_number':
-        if version <= 20:
-            zeff = readParameter('zeff', sim=sim)
-            scalar = sim.get_time_trace('particle_number')
-            scalar *= zeff
-        else:
-            scalar = sim.get_time_trace(trace)
-
-        custom = None
-        label = None
-        unitlabel = None
-
-    elif trace == 'bwb2':
-        amupar = constants.amupar
-        scalar = sim.get_time_trace('parallel_viscous_heating')
-        scalar *= 4./(3.*amupar)
-        custom = {'length':3, 'time':-2}
-        label = r'$(b\cdot W\cdot b)^2$'
-        unitlabel = r'm$^3$/s$^2$'
-
-    elif trace == 'li':
-        R0 = constants.R0
-        psi_lcfs = sim.get_time_trace('psi_lcfs')
-        psimin   = sim.get_time_trace('psimin')
-        ip       = sim.get_time_trace('toroidal_current_p')
-
-        scalar = -4.*np.pi*(psi_lcfs - psimin)/(R0*ip)
-        custom = None
-        label = r'Internal inductance: $l_i$'
-        unitlabel = None
-
-    elif trace == 'li3':
-        R0 = constants.R0
-        W_M = sim.get_time_trace('W_M')
-        ip = sim.get_time_trace('toroidal_current_p')
-
-        scalar = 4.*W_M/(R0*ip**2)
-        custom = None
-        label = r'Internal inductance: $l_i(3)$'
-        unitlabel = None
-
-    elif trace in ['kprad_n0','kprad_n']:
-        scalar = sim.get_time_trace(trace)*1.0E20
-        label = None
-        unitlabel = None
-        custom = None
-
-    elif trace in ['IZ','M_IZ']:
-        scalar = sim.get_time_trace('M_IZ')/sim.get_time_trace('toroidal_current_p')
-        label = None
-        unitlabel = None
-        custom = None
-
-    elif trace == 'sideways_force':
-        force_x = get_timetrace('Wall_Force_n1_x',sim=sim,units=units,growth=False,renorm=False,returnas='tuple')
-        force_y = get_timetrace('Wall_Force_n1_y',sim=sim,units=units,growth=False,renorm=False,returnas='tuple')
-        scalar = sim.get_time_trace('E_P')
-        scalar.values = np.sqrt(force_x[1]*force_x[1] + force_y[1]*force_y[1])
-        label = r'sideways force'
-        unitlabel = None
-        custom = None
-
-    elif trace in combos:
-        # trace is linear combination of native scalars
-        combo, custom, label, unitlabel = combos[trace]
-        for i, (name, fact) in enumerate(combo):
-            y = sim.get_time_trace(name)
-            if i==0:
-                scalar = fact*y
-            else:
-                scalar += fact*y
-
-    else:
-        # trace is a native scalar
-        scalar = sim.get_time_trace(trace)
-        custom = None
-        label = None
-        #unitlabel = None
-
-    if ('pellet_' in trace) or (trace in ['cauchy_fraction','cloud_pel','r_p']):
-        # if ipellet is given, get just that pellet's data
-        if (ipellet != 'all') and (scalar.values.ndim==2):
-            scalar.values = scalar.values[:,ipellet]
-
-    label, unitlabel = fpyl.get_tracelabel(units, trace, label=label, unitlabel=unitlabel,fac=fac)
-    if units=='mks':
-        scalar = fpyl.get_conv_trace('mks',trace,scalar,sim=sim,itor=itor,custom=custom)
-    
-    # now separate time and values arrays
-    time = scalar.time
-    values = scalar.values
-    
-    if growth:
-        values = 1.0/values[1:] * np.diff(values)/np.diff(time) #Used until 2021-05-12
-        #values = 1.0/values[1:] * fpyl.deriv(values,time)
-        time = time[:-1]
-    
-    if diff:
-        values = np.diff(values)/np.diff(time)
-        time = time[:-1]
-    
-    if renorm:
-        renormlist = []
-        for i in range(len(values)-1):
-            if(abs(values[i+1]/values[i]) < 1E-9):
-                renormlist.append(str(time[i]))
-                #print(values[i],values[i-1]+values[i+1])
-                # Only average value if growth rate is calculated
-                if growth:
-                    values[i] = (values[i-1] + values[i+1])/2.0
-        # When growth rate is calculated, check for normalization at last time
-        # step and drop this point, since it carries no information.
-        if growth:
-            if(abs(values[-2]/values[-1]) < 1E-9):
-                renormlist.append(str(time[-1]))
-                values = values[:-1]
-                time = time[:-1]
-        renormstr = ", ".join(renormlist)
-        if not quiet:
-            if len(renormstr) > 0:
-                print('Renormalization found at '+renormstr)
-    
-    if returnas=='tuple':
-        return time, values*fac, label, unitlabel
-    elif returnas=='time_trace':
-        return fpy.sim_data.time_trace(values*fac,time=time), label, unitlabel
 
 
 
@@ -439,7 +120,7 @@ def avg_time_trace(trace,units='m3dc1',sim=None,filename='C1.h5',
 
 
 
-def growth_rate(n=None,units='m3dc1',sim=None,filename='C1.h5',
+def growth_rate(n=None,units='m3dc1',sim=None,filename='C1.h5',start=None,
                 time_low_lim=500,slurm=True,plottrace=False,pub=False):
     """
     Evaluates kinetic energy growth rate. The growth rate is the mean of the logarithmic derivative of ke.
@@ -476,31 +157,37 @@ def growth_rate(n=None,units='m3dc1',sim=None,filename='C1.h5',
     if not isinstance(sim,fpy.sim_data):
         sim = fpy.sim_data(filename=filename)
     
+    gamma_stop = False
+    
     if slurm:
-        #try:
-        # Read Slurm log files. Should there be multiple log files in the directory, choose the file with largest Slurm Job ID
-        C1inputfiles = glob.glob(os.getcwd()+"/C1input")
-        if len(C1inputfiles) > 1:
-            fpyl.printwarn('WARNING: More than 1 C1input file found. Using the latest one.')
-            slurmfiles.sort(key=os.path.getmtime,reverse=True)
-        C1inputfile = C1inputfiles[0]
+        C1inputfile = fpyl.get_input_parameter_file()
         
         # Read n from Slurm log file
         with open(C1inputfile, 'r') as sf:
             for line in sf:
-                if 'ntor   ' in line:
+                if 'ntor ' in line or 'ntor=' in line:
                     ntorline = line.split()
                     n = int(ntorline[2])
                     break
+        gamma_stop = fpyl.str_in_file(C1inputfile,"Growth rate gamma has converged.")
         #except:
         #    n = fpyl.prompt('Not able to detemine ntor. Please enter value for n : ',int)
     else:
         n = readParameter('ntor',sim=sim,listc=False)
         fpyl.printnote('Using n=ntor='+"{:d}".format(n)+' as read from C1.h5 file.')
     
+    if gamma_stop:
+        time_low_lim = 0
+        with open(C1inputfile, 'r') as sf:
+            for line in sf:
+                if 'nt_gamma_gr' in line:
+                    nt_gamma_gr = int(line.split()[2])
+                    break
+        ntime = sim.ntime-1
+        ntimestep = readParameter('ntimestep',fname='time_'+str(ntime).zfill(3)+'.h5',sim=None,listc=False)
+        start = ntimestep - nt_gamma_gr
     
-    
-    gamma, dgamma,time,gamma_trace = avg_time_trace('ke',units,sim=sim,growth=True,renorm=True,start=None,time_low_lim=time_low_lim)
+    gamma, dgamma,time,gamma_trace = avg_time_trace('ke',units,sim=sim,growth=True,renorm=True,start=start,time_low_lim=time_low_lim)
     print(n,gamma,dgamma)
     
     not_noisy = 1
@@ -835,7 +522,7 @@ def scan_n(nmin=1,nmax=20,nstep=1,units='m3dc1',filename='C1.h5',time_low_lim=50
 
 
 
-def create_plot_gamma_n(n_list, gamma_list,norm_dia=False,fignum=None,figsize=None,lw=1,c=None,ls=None,marker=None,ms=36,lbl=None,units='m3dc1',xtick_min=None, xtick_step=1,legfs=None,leglblspace=None,leghandlen=None,title=None,export=False,txtname=None,pub=False):
+def create_plot_gamma_n(n_list, gamma_list,norm_dia=False,fignum=None,figsize=None,lw=1,c=None,ls=None,marker=None,ms=36,lbl=None,units='m3dc1',xtick_min=None, xtick_step=1,legfs=None,leglblspace=None,leghandlen=None,title=None,pub=False,export=False,txtname=None):
     
     # Set font sizes and plot style parameters
     if pub:
@@ -906,9 +593,7 @@ def create_plot_gamma_n(n_list, gamma_list,norm_dia=False,fignum=None,figsize=No
     
     if export:
         data_points = temp[0].get_data()
-        print(np.transpose(data_points))
         np.savetxt(txtname,data_points,delimiter='   ')
-        print(txtname)
     return
 
 
@@ -985,7 +670,7 @@ def compare_gamma_n(dirs,nmin=1,nmax=20,nstep=1,norm_dia=False,units='m3dc1',lab
         if len(dirs)!=len(labels):
             fpyl.printerr('ERROR: Number of directories not equal to number of labels.')
             return
-    pwd = os.getcwd()
+    cwd = os.getcwd()
     for i,d in enumerate(dirs):
         if os.path.isdir(d):
             os.chdir(d)
@@ -1015,7 +700,7 @@ def compare_gamma_n(dirs,nmin=1,nmax=20,nstep=1,norm_dia=False,units='m3dc1',lab
         else:
             mark = '.'
         plot_gamma_n(nmin,nmax,nstep,norm_dia=norm_dia,units=units,fignum=fignum,figsize=figsize,xtick_min=xtick_min,xtick_step=xtick_step,c=c,lw=lw,ls=ls,mark=mark,plot_crosses=plot_crosses,lbl=lbl,slurm=True,plottrace=False,legfs=legfs,leglblspace=leglblspace,leghandlen=leghandlen,ylimits=ylimits,title=title,export=export,txtname='gamma_'+d.replace('/','')+'.txt',no_prompt=no_prompt,pub=pub)
-        os.chdir(pwd)
+        os.chdir(cwd)
     
     return
 
@@ -1028,8 +713,8 @@ def write_gamma_n(results,ped_param, ipres, psin_ped_top,ped_structure=None,unit
     #elif (nmin < 0 and nmax < 0) and (results is None):
     #    raise Exception('nmin and nmax must be >=0 with nmax > nmin.')
     
-    pwd = os.getcwd()
-    pathdirs = pwd.split('/')
+    cwd = os.getcwd()
+    pathdirs = cwd.split('/')
     vpnum = pathdirs[-2]
     if vpnum == 'convergence_study':
         vpnum = pathdirs[-3]
@@ -1107,325 +792,6 @@ def write_gamma_n(results,ped_param, ipres, psin_ped_top,ped_structure=None,unit
 
 
 
-def omegastari(sim=None,filename='C1.h5',time=None,units='mks',points=400,n=1,pion=False,fcoords='pest',makeplot=False):
-    #Calculates ion diamagnetic frequency
-    if not isinstance(sim,fpy.sim_data):
-        sim = fpy.sim_data(filename=filename)
-    psin,psi = flux_average('psi',coord='scalar',sim=sim, fcoords=fcoords, linear=False, deriv=0, points=points, phit=0.0, filename=filename, time=time, psin_range=None, units='mks')
-    psi = psi*2*math.pi # Because psi is the poloidal flux per radiant as in B = grad(psi) x grad(phi) + B_phi
-    ni = flux_average('ni',coord='scalar',sim=sim, fcoords=fcoords, linear=False, deriv=0, points=points, phit=0.0, filename=filename, time=time, psin_range=None, units='mks')[1]
-    if pion:
-        pi = flux_average('pi',coord='scalar',sim=sim, fcoords=fcoords, linear=False, deriv=0, points=points, phit=0.0, filename=filename, time=time, psin_range=None, units='mks')[1]
-    else:
-        pi = 0.5*flux_average('p',coord='scalar',sim=sim, fcoords=fcoords, linear=False, deriv=0, points=points, phit=0.0, filename=filename, time=time, psin_range=None, units='mks')[1]
-    
-    #print(psi)
-    #print(ni)
-    #print(pi)
-    dpidpsi = fpyl.deriv(pi,psi)
-    
-    Zeff = readParameter('z_ion',sim=sim,listc=False)
-    ei = Zeff*1.602176634E-19
-    
-    omegasi = (n / (ei * ni))*dpidpsi
-    if units=='m3dc1':
-        omegasi = unit_conv(omegasi,arr_dim='mks',sim=sim,time=-1)
-    if makeplot:
-        plt.figure()
-        plt.plot(psin,omegasi,lw=2)
-        ax = plt.gca()
-        ax.grid(True,zorder=10,alpha=0.5) #There seems to be a bug in matplotlib that ignores the zorder of the grid #Uncomment for CLT paper
-        plt.xlabel(r'$\psi_N$',fontsize=12)
-        plt.ylabel(r'$\omega_{*i}$',fontsize=12)
-        plt.tight_layout() #adjusts white spaces around the figure to tightly fit everything in the window
-    
-    return psin, omegasi
-
-
-
-def get_ped_param(sim,filename='C1.h5',time=None,points=400,pion=False,fcoords='pest',psin_ped_top=0.86,psin_var_j=0.85,use_max_j=False,device=None):
-    if not isinstance(sim,fpy.sim_data):
-        sim = fpy.sim_data(filename=filename)
-    #psinedgelim = 0.86 #Min value of psin that is considered edge region
-    print('get_ped_param time:'+str(time))
-    # Determine pedestal alpha
-    psi_a,alpha = flux_average('alpha', coord='scalar', sim=sim, time=time, fcoords=fcoords, points=points, units='m3dc1')
-    psinedge = fpyl.find_nearest(psi_a,psin_ped_top)
-    psinedge_ind = fpyl.get_ind_at_val(psi_a,psinedge)
-    alpha_max = np.amax(alpha[psinedge_ind:])
-    #Check if it's really a local maximum inside the pedestal:
-    alpha_max_ind = fpyl.get_ind_at_val(alpha,alpha_max)
-    #print(alpha_max_ind,psi_a[alpha_max_ind])
-    if (alpha_max_ind < len(alpha)-1 and (alpha_max >= alpha[alpha_max_ind-1]) and (alpha_max >= alpha[alpha_max_ind+1])) or (alpha_max_ind==len(alpha)-1): #Check if the maximum is a relative maximum or occurs at the lcfs
-        #print('PEDESTAL ALPHA IS ABSOLUTE MAXIMUM')
-        print('Pedestal alpha = '+str(alpha_max))
-    else:
-        alpha_short = alpha[psinedge_ind:]
-        psin_a_short = psi_a[psinedge_ind:]
-        alpha_rel_max = signal.argrelmax(alpha_short)
-        if len(alpha_rel_max)==0:
-            fpyl.printwarn('WARNING: maximum of alpha not found!')
-            return None,None,None,None
-        maxima = np.take(alpha_short,alpha_rel_max)
-        maxima_pos = np.take(psin_a_short,alpha_rel_max)
-        alpha_max = np.amax(maxima)
-        #print(maxima,maxima_pos)
-        #print('PEDESTAL ALPHA IS RELATIVE MAXIMUM')
-        print('Pedestal alpha = '+str(alpha_max))
-    
-    # Determine pedestal average toroidal current density
-    psi_j,j = flux_average('j', coord='phi', sim=sim, time=time, fcoords=fcoords, points=points, units='m3dc1')
-    psinedge = fpyl.find_nearest(psi_j,psin_ped_top)
-    psinedge_ind = fpyl.get_ind_at_val(psi_j,psinedge)
-    j_max = np.amax(j[psinedge_ind:])
-    #Check if it's really a local maximum inside the pedestal:
-    j_max_ind = fpyl.get_ind_at_val(j,j_max)
-    if j_max_ind < len(j)-1 and (j_max >= j[j_max_ind-1]) and (j_max >= j[j_max_ind+1]):
-        print('Pedestal j_max = '+str(j_max))
-    else:
-        j_max = -1
-        fpyl.printwarn('WARNING: j_max has no maximum inside the pedestal!')
-        #return None,None,None,None
-    
-    #Calculate pedestal parallel current density as in ELITE:
-    jav = flux_average('jav', coord='scalar', sim=sim, time=time, fcoords=fcoords, points=points, units='mks')[1]
-    psi_j,jelite = flux_average('jelite', coord='scalar', sim=sim, time=time, fcoords=fcoords, points=points, units='mks',device=device)
-    psinedge = fpyl.find_nearest(psi_j,psin_ped_top)
-    psinedge_ind = fpyl.get_ind_at_val(psi_j,psinedge)
-    
-    if use_max_j:
-        #If maximum jelite inside the pedestal region is to be used:
-        jelite_max = np.amax(jelite[psinedge_ind:])
-    else:
-        #Check if jelite peaks inside the pedestal. If it does, take peak value as jelite. If it does
-        #not peak, then use jelite(psin=psin_var_j).
-        #Calculate absolute maximum in pedestal region:
-        jelite_max = np.amax(jelite[psinedge_ind:])
-        jelite_max_ind = fpyl.get_ind_at_val(jelite,jelite_max)
-        #print(jelite_max_ind, psi_j[jelite_max_ind], jelite_max,jelite[jelite_max_ind-1],jelite[jelite_max_ind+1])
-        #If local maximum
-        if jelite_max_ind < len(jelite)-1 and (jelite_max >= jelite[jelite_max_ind-1]) and (jelite_max >= jelite[jelite_max_ind+1]):
-            jelite_rel_max = jelite_max
-            fpyl.printnote('Used MAXIMUM for jelite')
-        else:
-            jelite_rel_max = 0.0
-        #Calculate average value in pedestal region
-        jelite_avg = np.average(jelite[psinedge_ind:])
-        #print(jelite_rel_max,jelite_avg)
-        j_threshold=1.2
-        #If jelite_rel_max > j_threshold*jelite_avg then we consider a peak inside the pedestal.
-        #Otherwise, use jelite(psin=psin_var_j):
-        if not jelite_rel_max > j_threshold*jelite_avg:
-            psinj = fpyl.find_nearest(psi_j,psin_var_j)
-            psinj_ind = fpyl.get_ind_at_val(psi_j,psinj)
-            jelite_max = jelite[psinj_ind]
-            fpyl.printwarn('Used psin_var_j for jelite')
-    jelite_sep = jelite[-1]
-    jelite_N = (jelite_max+jelite_sep)/(2.0*jav[-1])
-    print('Current density jelite = '+str(jelite_N))
-    
-    
-    # Determine diamagnetic frequency
-    psi_o,omegsti = omegastari(sim=sim,time=time,units='m3dc1',n=1,points=points,pion=pion,fcoords=fcoords,makeplot=False)
-    psinedge = fpyl.find_nearest(psi_o,psin_ped_top)
-    psinedge_ind = fpyl.get_ind_at_val(psi_o,psinedge)
-    omegsti_max = np.amax(omegsti[psinedge_ind:]) #ToDo: Check if it's really a local maximum
-    print('Ion diamagnetic frequency = '+str(omegsti_max))
-    ped_param = [alpha_max,j_max,jelite_N,omegsti_max]
-    return ped_param
-
-
-
-
-
-def eval_growth_n(dirs=['./'],nmin=1,nmax=20,nstep=1,plotef=False,mtype=False,psin_ped_top=0.86,psin_var_j=0.85,use_max_j=False,points=800,units='m3dc1',fcoords='pest',pion=False,nts=2,fix=False,legfs=None,title=None,device=None,fit=True,psin_cutoff=0.7,doPlot=False):
-    if not isinstance(psin_ped_top, (np.ndarray,list)):
-        psin_ped_top = np.repeat(psin_ped_top,len(dirs))
-    
-    pwd = os.getcwd()
-    n_dirs = len(dirs)
-    data = {}
-    bad_runs = []
-    # The variable 'complete' is True if all linear simulations have finished or if the user wants to calculate the growth rates for the existing simulations.
-    # If this is the case, the code checks for existing growth rate results. The variable 'proceed' is set to True if no previous results exist or
-    # if the user wants to overwrite them.
-    
-    for d in dirs:
-        # Check if directory exists
-        if os.path.isdir(d):
-            print('Evaluating directory '+d)
-            #Check if all simulations have finished
-            n_incomplete = check_linear_runs(d,nts=nts,start=False,account='mp288',update_stat=False)
-            if n_incomplete>0:
-                complete = True
-                fpyl.printerr('Stopped. ' + str(n_incomplete) + ' simulations have not completed (assuming '+str(nts)+' time slices).')
-                #Repeat failed simulations?
-                rerun_input = fpyl.prompt('Do you want to rerun the failed simulations? (y/n) : ',['y','n'])
-                if rerun_input=='y':
-                    n_incomplete = check_linear_runs(d,nts=nts,start=True,account='mp288',update_stat=True)
-                not_finished_input = fpyl.prompt('Calculate growth rates anyways? (y/n) : ',['y','n'])
-                complete = False if not_finished_input=='n' else True
-            else:
-                complete = True
-            
-            proceed = False
-            os.chdir(d)
-            
-            if complete:
-                files = glob.glob("growth_rates*.dat")
-                if len(files)>0:
-                    if not fix:
-                        openf_input = fpyl.prompt('Previous results found. Do you want to overwrite the existing file? (y/n) : ',['y','n'])
-                    else:
-                        openf_input = 'y'
-                    if openf_input == 'n':
-                        if len(files)>1:
-                                files.sort(key=os.path.getmtime,reverse=True)
-                                print('More than 1 file found. Opening newest file: '+files[0])
-                        f = files[0]
-                        results = Gamma_file(f)
-                    else:
-                        proceed = True
-                else:
-                    proceed = True
-            
-            
-            if proceed:
-                # Determine ipres based on slurm log file
-                slurmfiles = glob.glob(os.getcwd()+"/slurm*.out")
-                if len(slurmfiles) < 1:
-                    slurmfiles = glob.glob(os.getcwd()+'/n'+str(nmin).zfill(2)+"/slurm*.out")
-                    if len(slurmfiles) < 1:
-                        fpyl.printerr('ERROR: No Slurm output file found!')
-                        os.chdir(pwd)
-                        continue
-                
-                if len(slurmfiles) > 1:
-                    fpyl.printwarn('WARNING: More than 1 Slurm log file found. Using the latest one.')
-                    slurmfiles.sort(key=os.path.getmtime,reverse=True)
-                slurmfile = slurmfiles[0]
-                
-                # Read ipres from Slurm log file
-                with open(slurmfile, 'r') as sf:
-                    for line in sf:
-                        if 'ipres   ' in line:
-                            ipresline = line.split()
-                            ipres = int(ipresline[2])
-                print('ipres='+str(ipres))
-                
-                results = scan_n(nmin,nmax,nstep,units=units,slurm=True,plottrace=False)
-                data[d] = [proceed, results, ipres]
-                os.chdir(pwd)
-            else:
-                data[d] = [proceed, None, None]
-                os.chdir(pwd)
-        else:
-            fpyl.printerr('ERROR: Directory ' + d + ' does not exist!')
-            data[d] = [False, None, None]
-            os.chdir(pwd)
-            
-    
-    # Close all previously opened figures used during the interactive analysis
-    plt.close('all')
-    
-    for i,d in enumerate(dirs):
-        if data[d][0]:#if proceed==True
-            os.chdir(d)
-            if plotef or mtype:
-                for j,n in enumerate(np.arange(nmin,nmax+1,nstep)):
-                    fpyl.printnote('Directory '+str(i+1)+'/'+str(n_dirs)+': '+d+'... Analyzing n='+str(n)+' ...')
-                    if n==nmin:
-                        path = 'n'+str(n).zfill(2)
-                    else:
-                        path = '../n'+str(n).zfill(2)
-                    os.chdir(path)
-                    
-                    sim0 = fpy.sim_data(filename='C1.h5',time=-1,fast=True)
-                    sim1 = fpy.sim_data(filename='C1.h5',time='last',fast=True)
-                    
-                    if n==nmin:
-                        ped_param = get_ped_param(sim0,points=points,pion=pion,fcoords=fcoords,psin_ped_top=psin_ped_top[i],psin_var_j=psin_var_j,use_max_j=use_max_j,device=device)
-                        psi,p = flux_average('p',sim=sim0,units='mks',points=points)
-                        #ped_top,ped_wid = pedestal_finder(p,psi_norm=psi,ngrid=len(p))
-                        ped_top,ped_wid = get_ped_structure(p,psi,fit=fit,psin_cutoff=psin_cutoff,ngrid=len(p),doPlot=doPlot)
-                        if not all(ped_param):
-                            bad_runs.append(d)
-                            os.chdir(pwd)
-                            continue
-                    if mtype:
-                        spec = eigenfunction(sim=[sim0,sim1],fcoords=fcoords,points=points,makeplot=True,n=n,save=True,savedir='../')
-                        plt.close('all')
-                        data[d][1].pblist[j-1],data[d][1].ped_loc[j-1],_ = mode_type(spec,sim0,psin_ped_top=psin_ped_top[i])
-                    
-                    if plotef:
-                        #fpyl.printnote('Plotting eigenfunction for n='+str(n))
-                        plot_field('p',sim=[sim1,sim0],linear=True,bound=True,lcfs=True,save=True,savedir='../',ntor=n)
-                        plt.close()
-                    if n==nmax:
-                        os.chdir('../')
-                if mtype:
-                    print('Mode types:')
-                    print(data[d][1].pblist)
-            else:
-                ped_top,ped_wid = (None,None)
-                os.chdir('n'+str(nmin).zfill(2))
-                sim0 = fpy.sim_data(time=-1)
-                ped_param = get_ped_param(sim0,points=points,pion=pion,fcoords=fcoords,psin_ped_top=psin_ped_top[i],psin_var_j=psin_var_j,use_max_j=use_max_j,device=device)
-                if not all(ped_param):
-                    bad_runs.append(d)
-                    os.chdir(pwd)
-                    continue
-                os.chdir('../')
-            
-            plt.close('all')
-            write_gamma_n(data[d][1],ped_param,data[d][2],psin_ped_top=psin_ped_top[i],ped_structure=[ped_top,ped_wid],units=units,fix=fix)
-        
-            # Plot gamma as a function of n
-            # Identify simulations where the growth rate was not calculated reliably. These are highlighted in the plot.
-            if title is None:
-                cwd = os.getcwd()
-                cdirs = cwd.split('/')
-                title=cdirs[-2]+'/'+cdirs[-1]
-                reset_title=True
-            else:
-                reset_title=False
-            #plot_gamma_n(nmin=nmin,nmax=nmax,nstep=nstep,norm_dia=False,units=units,fignum=None,c=None,ls=None,mark='.',plot_crosses=True,lbl=None,slurm=True,plottrace=False,legfs=legfs,title=title)
-            if reset_title:
-                title=None
-        
-            # Update status on portal. The update is done only if the analysis above has been performed.
-            if os.path.isfile('../../py_config_portal.dat') or os.path.isfile('../../py_config.dat'):
-                cwd = os.getcwd()
-                dir_path = cwd.split('/')
-                vpnum = dir_path[-2]
-                basedirs = glob.glob('../base_*'+dir_path[-1]+'*')
-                print(basedirs)
-                if len(basedirs)==1:
-                    basedir = glob.glob('../base_*'+dir_path[-1]+'*')[0]
-                    basedir = basedir.split('/')[-1]
-                    if os.environ['FIO_ARCH'] in ['flux','sunfire']:
-                        os.chdir(basedirs[0])
-                        print(os.getcwd())
-                        update_status(80)
-                        os.chdir(pwd)
-                    else:
-                        os.chdir(pwd)
-                        update_remote_status(80,vpnum,basedir)
-                else:
-                    os.chdir(pwd)
-                    fpyl.printwarn('WARNING: Cannot determine base directory. Status not updated.')
-            else:
-                os.chdir(pwd)
-                fpyl.printwarn('WARNING: No file py_config_portal.dat. Status not updated.')
-        else:
-            os.chdir(pwd)
-    
-    compare_gamma_n(dirs,nmin=nmin,nmax=nmax,nstep=nstep,norm_dia=False,units=units,fignum=418,figsize=None,no_prompt=True,quiet=True)
-    
-    if len(bad_runs)>0:
-        fpyl.printwarn('WARNING: The following cases were not evaluated:')
-        print(bad_runs)
-    return
 
 
 
@@ -1485,14 +851,14 @@ def create_plot_time_trace_fast(time,scalar,trace,units='mks',millisec=False,sim
             if units=='mks':
                 #scalar = unit_conv(scalar, arr_dim='M3DC1', filename=filename, energy=1)
                 if growth:
-                    plt.ylabel(r'$\gamma$ $[s^{-1}]$')
+                    plt.ylabel(r'$\gamma$ $[s^{-1}]$',fontsize=axlblfs)
                 else:
-                    plt.ylabel(r'Kinetic energy $[J]$')
+                    plt.ylabel(r'Kinetic energy $[J]$',fontsize=axlblfs)
             elif units.lower()=='m3dc1':
                 if growth:
-                    plt.ylabel(r'$\gamma/\omega_A$')
+                    plt.ylabel(r'$\gamma/\omega_A$',fontsize=axlblfs)
                 else:
-                    plt.ylabel(r'Kinetic energy (M3DC1 units)')
+                    plt.ylabel(r'Kinetic energy (M3DC1 units)',fontsize=axlblfs)
         else:
             plt.ylabel(ylbl,fontsize=axlblfs)
     
@@ -1570,7 +936,6 @@ def create_plot_time_trace_fast(time,scalar,trace,units='mks',millisec=False,sim
         plt.savefig(tracestr+'_n'+"{:d}".format(ntor)+'.pdf', format='pdf',bbox_inches='tight')
         
     if export:
-        print(plot_data)
         np.savetxt(txtname,plot_data,delimiter='   ')
     return
 
@@ -1768,6 +1133,8 @@ def plot_time_trace_fast(trace,units='mks',millisec=False,sim=None,filename='C1.
     When plotting energy spectrum, do not plot energy for n=0 mode.
 
     """
+    yscale='linear' if yscale=='lin' else yscale
+    
     if not isinstance(sim,fpy.sim_data):
         sim = fpy.sim_data(filename)
     time,y_axis,label, unitlabel = get_timetrace(trace,sim=sim,units=units,growth=growth,diff=diff,renorm=renorm,unitlabel=unitlabel,fac=fac)
@@ -1877,5 +1244,4 @@ def integrate_time_trace(trace,nts=None,method=None,units='mks',sim=None,
         trace_integrated = scalar_int
     
     return trace_integrated
-
 
