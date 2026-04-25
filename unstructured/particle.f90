@@ -777,9 +777,11 @@ subroutine init_particles(lrestart, ierr)
          itri = itri + 1
          x_min = minval(mesh_coord(1, :, itri))
          x_max = maxval(mesh_coord(1, :, itri))
+#ifdef USE3D
          phi_min = mesh_coord(2, 1, itri)
          phi_max = mesh_coord(2, 4, itri)
          if (phi_max == 0) phi_max = toroidal_period
+#endif
          z_min = minval(mesh_coord(3, :, itri))
          z_max = maxval(mesh_coord(3, :, itri))
 
@@ -4582,7 +4584,7 @@ subroutine filter_velocity
    integer :: i, ntor_i
    integer, dimension(dofs_per_element) :: imask
    type(vector_type), pointer :: vsource
-   type(field_type) ::   phi_v, bz_v
+   type(field_type) ::   phi_v, bz_v, psi_v
    vectype, dimension(dofs_per_element) :: dofs
    integer :: ierr
    type(field_type) ::   u_v
@@ -4592,8 +4594,8 @@ subroutine filter_velocity
    type(vector_type) :: b1_vel
    vectype, dimension(dofs_per_element, dofs_per_element) :: tempxx
    type(matrix_type) :: diff_tor_mat
-   type(field_type) ::  prcos_v, prsin_v, pzcos_v, pzsin_v, phcos_v, phsin_v, bzcos_v, bzsin_v
-  vectype, dimension(MAX_PTS, OP_NUM) :: prcos79, prsin79, pzcos79, pzsin79, phcos79, phsin79, bzcos79, bzsin79
+   type(field_type) ::  pscos_v, pssin_v, pzcos_v, pzsin_v, phcos_v, phsin_v, bzcos_v, bzsin_v
+  vectype, dimension(MAX_PTS, OP_NUM) :: pscos79, pssin79, pzcos79, pzsin79, phcos79, phsin79, bzcos79, bzsin79
 
    logical, save :: first_time = .true.
     
@@ -4611,11 +4613,17 @@ subroutine filter_velocity
       bzcos_v = 0.
       bzsin_v = 0.
 
+      call create_field(pscos_v)
+      call create_field(pssin_v)
+      pscos_v = 0.
+      pssin_v = 0.
+
+
       do itri = 1, local_elements()
          call get_zone(itri, izone)
 
          call define_element_quadrature(itri, int_pts_main, int_pts_tor)
-         call define_fields(itri, FIELD_PHI + FIELD_I, 1, 0)
+         call define_fields(itri, FIELD_PHI + FIELD_I + FIELD_PSI , 1, 0)
 
          temp79a = ph179(:, OP_1) * cos(ntor_i * phi_79)
          dofs = intx2(mu79(:, :, OP_1), temp79a)
@@ -4632,17 +4640,29 @@ subroutine filter_velocity
          temp79a = bz179(:, OP_1) * sin(ntor_i * phi_79)
          dofs = intx2(mu79(:, :, OP_1), temp79a)
          call vector_insert_block(bzsin_v%vec, itri, 1, dofs, VEC_ADD)
+
+         temp79a = ps179(:, OP_1) * cos(ntor_i * phi_79)
+         dofs = intx2(mu79(:, :, OP_1), temp79a)
+         call vector_insert_block(pscos_v%vec, itri, 1, dofs, VEC_ADD)
+
+         temp79a = ps179(:, OP_1) * sin(ntor_i * phi_79)
+         dofs = intx2(mu79(:, :, OP_1), temp79a)
+         call vector_insert_block(pssin_v%vec, itri, 1, dofs, VEC_ADD)
       end do
 
       call newvar_solve(phcos_v%vec, mass_mat_lhs)
       call newvar_solve(phsin_v%vec, mass_mat_lhs)
       call newvar_solve(bzcos_v%vec, mass_mat_lhs)
       call newvar_solve(bzsin_v%vec, mass_mat_lhs)
+      call newvar_solve(pscos_v%vec, mass_mat_lhs)
+      call newvar_solve(pssin_v%vec, mass_mat_lhs)
 
       call get_axi(phcos_v)
       call get_axi(phsin_v)
       call get_axi(bzcos_v)
       call get_axi(bzsin_v)
+      call get_axi(pscos_v)
+      call get_axi(pssin_v)
 
       ! ieq(1) = u_i
       ! ieq(2) = vz_i
@@ -4661,16 +4681,21 @@ subroutine filter_velocity
       call create_field(bz_v)
       bz_v = 0.
 
+      call create_field(psi_v)
+      psi_v = 0.
+
       do itri = 1, local_elements()
          call get_zone(itri, izone)
 
          call define_element_quadrature(itri, int_pts_main, int_pts_tor)
-         call define_fields(itri, FIELD_PHI + FIELD_V + FIELD_CHI + FIELD_I, 1, 0)
+         call define_fields(itri, FIELD_PHI + FIELD_I + FIELD_PSI, 1, 0)
 
          call eval_ops(itri, phcos_v, phcos79)
          call eval_ops(itri, phsin_v, phsin79)
          call eval_ops(itri, bzcos_v, bzcos79)
          call eval_ops(itri, bzsin_v, bzsin79)
+         call eval_ops(itri, pscos_v, pscos79)
+         call eval_ops(itri, pssin_v, pssin79)
 
          ph179(:, OP_1) = ph179(:, OP_1)                                &
             - phcos79(:, OP_1) * cos(ntor_i * phi_79)                   &
@@ -4680,11 +4705,18 @@ subroutine filter_velocity
             - bzcos79(:, OP_1) * cos(ntor_i * phi_79)                   &
             - bzsin79(:, OP_1) * sin(ntor_i * phi_79)
 
+         ps179(:, OP_1) = ps179(:, OP_1)                                &
+            - pscos79(:, OP_1) * cos(ntor_i * phi_79)                   &
+            - pssin79(:, OP_1) * sin(ntor_i * phi_79)
+
          dofs = intx2(mu79(:, :, OP_1), ph179(:, OP_1))
          call vector_insert_block(phi_v%vec, itri, 1, dofs, VEC_ADD)
 
          dofs = intx2(mu79(:, :, OP_1), bz179(:, OP_1))
          call vector_insert_block(bz_v%vec, itri, 1, dofs, VEC_ADD)
+
+         dofs = intx2(mu79(:, :, OP_1), ps179(:, OP_1))
+         call vector_insert_block(psi_v%vec, itri, 1, dofs, VEC_ADD)
       end do
 
       call newvar_solve(phi_v%vec, mass_mat_lhs)
@@ -4693,12 +4725,18 @@ subroutine filter_velocity
       call newvar_solve(bz_v%vec, mass_mat_lhs)
       bz_field(1) = bz_v
 
+      call newvar_solve(psi_v%vec, mass_mat_lhs)
+      psi_field(1) = psi_v
+
       call destroy_field(phcos_v)
       call destroy_field(phsin_v)
       call destroy_field(phi_v)
       call destroy_field(bzcos_v)
       call destroy_field(bzsin_v)
       call destroy_field(bz_v)
+      call destroy_field(pscos_v)
+      call destroy_field(pssin_v)
+      call destroy_field(psi_v)
    end do
 
 end subroutine filter_velocity
