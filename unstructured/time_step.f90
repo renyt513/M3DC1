@@ -1,6 +1,20 @@
+! ---------------------------------------------------------------------
+! File: time_step.f90
+! Purpose: High-level time stepping orchestration for M3DC1.
+! Summary:
+! - Selects between split/unsplit integrators and exposes lifecycle
+!   routines: `initialize_timestep`, `onestep`, `finalize_timestep`, etc.
+! - `onestep` contains the main advance logic: matrix (re)build, transport
+!   coefficient updates, calling `step_split`/`step_unsplit`, and
+!   handling repeat-on-failure logic for 3D/iterative solves.
+! Key dependencies: many modules (diagnostics, arrays, transport, boundary,
+! particles, kprad_m3dc1, etc.). Annotate where matrices are built
+! and where time-step repetition occurs.
+! ---------------------------------------------------------------------
+
 module time_step
-  use time_step_split
-  use time_step_unsplit
+   use time_step_split
+   use time_step_unsplit
   implicit none
 
   integer :: meshAdapted
